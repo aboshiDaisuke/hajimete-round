@@ -1,0 +1,4 @@
+.DS_Store
+# 生成物（tools/ のスクリプトで作り直せる）
+dist/
+assets/render_*.png

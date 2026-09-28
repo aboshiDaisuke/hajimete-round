@@ -257,6 +257,7 @@
     const go = () => {
       if (!st.built && !build()) { ui.stage.classList.add('scene-failed'); ui.fallback && (ui.fallback.hidden = false); return; }
       ui.stage.prepend(st.renderer.domElement);
+      if (st.ball.userData.mat) st.ball.userData.mat.color.set(window.GOLF_BALL_COLOR || '#f8f8f4');
       ui.go.addEventListener('click', onGo);
       ui.amp.addEventListener('input', () => { ui.ampOut.textContent = `${ui.amp.value}cm`; });
       ui.ampOut.textContent = `${ui.amp.value}cm`;

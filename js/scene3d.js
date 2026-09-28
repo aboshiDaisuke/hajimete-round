@@ -45,11 +45,17 @@
     const f = Math.pow(1 - Math.pow(u, 6), 1 / 6);
     return (fairwayWidth(z) / 2) * f - Math.abs(x - cx(z)) - (u >= 1 ? 30 : 0);
   }
-  const teeSd = (x, z) => Math.min(7 - Math.abs(x), 5 - Math.abs(z - TEE_Z));
+  // ティー：バックティー（パー4）と、池の横のショートホール用ティー（パー3）
+  const TEES = [
+    { x: 0, z: TEE_Z, hw: 7, hd: 5, h: 1.4, marker: 0x2f6fd6 },
+    { x: 70, z: -25, hw: 5, hd: 4, h: null, marker: 0xd8322b },
+  ];
+  const teeBoxSd = (t, x, z) => Math.min(t.hw - Math.abs(x - t.x), t.hd - Math.abs(z - t.z));
+  const teeSd = (x, z) => Math.max(teeBoxSd(TEES[0], x, z), teeBoxSd(TEES[1], x, z));
   const pathX = (z) => cx(z) - 44 + 6 * Math.sin(z * 0.03);
   const pathSd = (x, z) => (z > 135 || z < -170) ? -99 : 1.6 - Math.abs(x - pathX(z));
 
-  function height(x, z) {
+  function height(x, z, noTee) {
     const d = x - cx(z), ad = Math.abs(d);
     let h = 0.9 * Math.sin(x * 0.035 + 0.7) * Math.cos(z * 0.028) + 0.6 * Math.sin(z * 0.05 + x * 0.013);
     h += smooth(38, 95, ad) * (4 + 2 * Math.sin(z * 0.031 + (d > 0 ? 2 : 0)));
@@ -63,8 +69,13 @@
         0.25 * Math.sin((x - GX) * 0.2) * Math.cos((z - GREEN_Z) * 0.18);
       h = h * (1 - gm) + gh * gm;
     }
-    const tm = smooth(-3, 0.5, teeSd(x, z));
-    h = h * (1 - tm) + 1.4 * tm;
+    if (!noTee) for (const t of TEES) {
+      const tm = smooth(-3, 0.5, teeBoxSd(t, x, z));
+      if (tm > 0) {
+        if (t.h == null) t.h = height(t.x, t.z, true) + 0.5;
+        h = h * (1 - tm) + t.h * tm;
+      }
+    }
     for (const b of bunkers) {
       const sd = blobSd(b, x, z);
       if (sd > -6) h -= 0.9 * smooth(-0.8, 1.6, sd) - 0.25 * smooth(-5, -1, sd) * (1 - smooth(-1, 1, sd));
@@ -236,6 +247,12 @@
     return mesh;
   }
 
+  function segDist(x, z, ax, az, bx, bz) {
+    const vx = bx - ax, vz = bz - az;
+    const t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / (vx * vx + vz * vz)));
+    return Math.hypot(x - ax - vx * t, z - az - vz * t);
+  }
+
   function buildTrees(THREE) {
     const rand = rng(20260928);
     const list = [];
@@ -243,6 +260,8 @@
       if (blobSd(pond, x, z) > -7) return false;
       if (blobSd(green, x, z) > -13) return false;
       if (teeSd(x, z) > -9) return false;
+      if (segDist(x, z, TEES[1].x, TEES[1].z, GX, GREEN_Z) < 16) return false;
+      if (Math.hypot(x - TEES[1].x, z - TEES[1].z) < 24) return false;
       if (pathSd(x, z) > -3.5) return false;
       if (fairwaySd(x, z) > -14) return false;
       for (const b of bunkers) if (blobSd(b, x, z) > -6) return false;
@@ -349,24 +368,29 @@
 
   function buildFlag(THREE) {
     const group = new THREE.Group();
-    const gy = height(CUP.x, CUP.z);
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 5, 10), new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.4 }));
-    pole.position.set(CUP.x, gy + 2.5, CUP.z);
+    pole.position.set(0, 2.5, 0);
     pole.castShadow = true;
     const flagGeo = new THREE.PlaneGeometry(2.2, 1.4, 16, 6);
     flagGeo.translate(1.1, 0, 0);
     const flag = new THREE.Mesh(flagGeo, new THREE.MeshStandardMaterial({ color: 0xf2b705, roughness: 0.7, side: THREE.DoubleSide }));
-    flag.position.set(CUP.x + 0.05, gy + 4.25, CUP.z);
+    flag.position.set(0.05, 4.25, 0);
     flag.rotation.y = -0.5;
     flag.castShadow = true;
-    const cup = new THREE.Mesh(new THREE.CircleGeometry(0.32, 24), new THREE.MeshBasicMaterial({ color: 0x0b0f0c }));
+    const cup = new THREE.Mesh(new THREE.CircleGeometry(0.2, 32), new THREE.MeshBasicMaterial({ color: 0x0b0f0c }));
     cup.rotation.x = -Math.PI / 2;
-    cup.position.set(CUP.x, gy + 0.03, CUP.z);
+    cup.position.set(0, 0.03, 0);
     group.add(pole, flag, cup);
     const base = flagGeo.attributes.position.array.slice();
-    return {
-      group,
-      top: new THREE.Vector3(CUP.x, gy + 5.2, CUP.z),
+    const api = {
+      group, pole, flagMesh: flag,
+      top: new THREE.Vector3(),
+      setPin(x, z) {
+        const gy = height(x, z);
+        group.position.set(x, gy, z);
+        api.top.set(x, gy + 5.2, z);
+      },
+      setWind(angle) { flag.rotation.y = angle; },
       wave(t) {
         const arr = flagGeo.attributes.position.array;
         for (let i = 0; i < arr.length; i += 3) {
@@ -378,6 +402,8 @@
         flagGeo.computeVertexNormals();
       },
     };
+    api.setPin(CUP.x, CUP.z);
+    return api;
   }
 
   function buildTeeObjects(THREE) {
@@ -385,20 +411,30 @@
     const y = height(0, TEE_Z);
     const mk = (color, x) => {
       const m = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 14), new THREE.MeshStandardMaterial({ color, roughness: 0.4 }));
-      m.position.set(x, y + 0.26, TEE_Z - 3);
+      m.position.set(x, y + 0.26, TEE_Z - 5.5);   // ボールはマーカーを結んだ線より後ろに置く
       m.castShadow = true;
       group.add(m);
     };
     mk(0x2f6fd6, -3.2); mk(0x2f6fd6, 3.2);
+    // ショートホール用ティーのマーカー（グリーン方向に向けて並べる）
+    const t2 = TEES[1], y2 = height(t2.x, t2.z);
+    const a = Math.atan2(GX - t2.x, GREEN_Z - t2.z);
+    for (const s of [-1, 1]) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 14), new THREE.MeshStandardMaterial({ color: t2.marker, roughness: 0.4 }));
+      m.position.set(t2.x + Math.sin(a) * 2 + Math.cos(a) * 2.6 * s, y2 + 0.26, t2.z + Math.cos(a) * 2 - Math.sin(a) * 2.6 * s);
+      m.castShadow = true;
+      group.add(m);
+    }
     const peg = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.008, 0.06, 10), new THREE.MeshStandardMaterial({ color: 0xf2b705, roughness: 0.4 }));
     peg.position.set(0.6, y + 0.03, TEE_Z - 4);
     group.add(peg);
     return { group, ballPos: new THREE.Vector3(0.6, y + 0.06 + 0.0214 * 2.4, TEE_Z - 4), y };
   }
 
-  function makeBall(THREE, scale) {
-    const mat = new THREE.MeshPhysicalMaterial({ color: 0xf8f8f4, roughness: 0.36, clearcoat: 0.7, clearcoatRoughness: 0.2 });
+  function makeBall(THREE, scale, color) {
+    const mat = new THREE.MeshPhysicalMaterial({ color: color || 0xf8f8f4, roughness: 0.36, clearcoat: 0.7, clearcoatRoughness: 0.2 });
     const holder = new THREE.Group();
+    holder.userData.mat = mat;
     const fallback = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), mat);
     holder.add(fallback);
     holder.scale.setScalar(scale);
@@ -612,7 +648,7 @@
     }
 
     Object.assign(state, {
-      built: true, renderer, scene, camera, controls, flag, camCurve, lookCurve,
+      built: true, renderer, scene, camera, controls, flag, camCurve, lookCurve, teeBall: ball,
       hotspots: hotspotDefs(THREE, { marker150: stakes.marker150, flagTop: flag.top }),
       tmpLook: new THREE.Vector3(), THREE,
     });
@@ -692,6 +728,7 @@
     const reduced = prefersReduced();
     if (state.flag && !reduced) state.flag.wave(time / 1000);
     if (state.mode === 'hero') heroFrame(time);
+    else if (state.mode === 'play') { if (state.onFrame) state.onFrame(time); }
     else if (state.controls) {
       if (state.fly) {
         const f = state.fly;
@@ -755,11 +792,14 @@
       state.mode = opts.mode || 'hero';
       state.layer = opts.layer || null;
       state.onSelect = opts.onSelect || null;
+      state.onFrame = opts.onFrame || null;
+      state.teeBall.visible = state.mode !== 'play';
+      if (state.mode !== 'play') { state.flag.setPin(CUP.x, CUP.z); state.flag.setWind(-0.5); }
       container.prepend(state.renderer.domElement);
       requestAnimationFrame(() => container.classList.add('scene-ready'));
       if (state.controls) {
         state.controls.enabled = state.mode === 'explore';
-        state.renderer.domElement.style.touchAction = state.mode === 'explore' ? 'none' : 'pan-y';
+        state.renderer.domElement.style.touchAction = state.mode === 'hero' ? 'pan-y' : 'none';
       }
       if (state.mode === 'explore') { buildLayer(); setOverview(true); }
       size();
@@ -792,7 +832,32 @@
   window.addEventListener('resize', () => size());
   document.addEventListener('visibilitychange', () => { if (state.renderer) setRunning(); });
 
+  /* ---------- ゲーム用：地面の種類（ライ）の判定 ---------- */
+  function lie(x, z) {
+    const d = x - cx(z);
+    if (d < -72 || d > 86 || z > 142 || z < -178) return 'ob';
+    if (blobSd(pond, x, z) > 0) return 'water';
+    for (const b of bunkers) if (blobSd(b, x, z) > 0) return 'bunker';
+    const g = blobSd(green, x, z);
+    if (g > 0) return 'green';
+    if (g > -2.4) return 'fringe';
+    if (teeSd(x, z) > 0) return 'tee';
+    if (fairwaySd(x, z) > 0) return 'fairway';
+    if (pathSd(x, z) > 0) return 'path';
+    return 'rough';
+  }
+  const HOLES = [
+    { n: 1, par: 4, tee: { x: 0.6, z: TEE_Z - 4 }, pin: { x: GX + 3, z: GREEN_Z - 2 }, wind: [0, 4] },
+    { n: 2, par: 3, tee: { x: TEES[1].x, z: TEES[1].z }, pin: { x: GX - 5, z: GREEN_Z + 5 }, wind: [1, 4] },
+    { n: 3, par: 4, tee: { x: -1.6, z: TEE_Z - 1.5 }, pin: { x: GX + 7, z: GREEN_Z - 6 }, wind: [2, 6] },
+  ];
+
   window.GolfScene = {
+    world() {
+      if (!state.built) return null;
+      return { THREE: state.THREE, scene: state.scene, camera: state.camera, renderer: state.renderer,
+        height: (x, z) => height(x, z), lie, center: cx, holes: HOLES, flag: state.flag, makeBall };
+    },
     mount, unmount, select,
     resetView: () => setOverview(false),
     get hotspots() { return state.hotspots; },

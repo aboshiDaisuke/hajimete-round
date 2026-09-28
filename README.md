@@ -35,16 +35,21 @@ js/app.js             画面の切り替え・保存・各画面の描画
 js/scene3d.js         3Dコース（地形・芝・池・木・旗・解説ポイント）
 js/putting.js         パター距離感ゲーム
 js/tempo.js           テンポ練習
-js/game.js            ラウンドゲーム（3クリックショット・ゴルファー・弾道・転がり）
+js/game.js            ラウンドゲーム（3クリックショット・弾道・転がり・スイング同期）
+js/bgm.js             BGM（Web Audio で演奏するオリジナル曲とファンファーレ）
+assets/golfer-glb.js  Blender で作ったゴルファー（体・服・クラブ・スイング／パットのアニメーション）
 assets/ball-glb.js    Blender で作ったディンプル付きボール（GLB を埋め込み）
 assets/*.png, *.jpg   Blender でレンダリングしたアイコンとヒーロー画像
-tools/blender_assets.py  上の素材を作る Blender スクリプト
+tools/blender_assets.py  ボール・アイコン・ヒーロー画像を作る Blender スクリプト
+tools/blender_golfer.py  ゴルファーを作る Blender スクリプト（-- check でポーズ確認画像も）
 tools/build_artifact.py  1枚のHTMLにまとめる（公開用 → dist/artifact.html）
 ```
 
 ## 素材を作り直す
 
 ```
+blender -b -P tools/blender_golfer.py
+node -e "const b=require('fs').readFileSync('assets/golfer.glb');require('fs').writeFileSync('assets/golfer-glb.js','window.GOLFER_GLB_BASE64=\"'+b.toString('base64')+'\";')"
 blender -b -P tools/blender_assets.py
 python3 -c "import base64;b=open('assets/ball.glb','rb').read();open('assets/ball-glb.js','w').write('window.BALL_GLB_BASE64=\"'+base64.b64encode(b).decode()+'\";')"
 ```

@@ -9,8 +9,8 @@
   'use strict';
 
   const YD = 0.9144;
-  const BALL_R = 0.0214 * 2.2;   // 見やすいように実寸の2.2倍
-  const CUP_R = 0.16;            // カップに入る判定（ゲーム用に大きめ）
+  const BALL_R = 0.0214 * 1.6;   // 見やすいように実寸の1.6倍
+  const CUP_R = 0.12;            // カップに入る判定（ゲーム用に少し大きめ）
   const CLUBS = [
     { id: '1W', name: 'ドライバー', max: 215, launch: 12, run: 0.16, tee: true },
     { id: '5W', name: '5番ウッド', max: 185, launch: 15, run: 0.12 },
@@ -36,6 +36,14 @@
   const TERMS = { '-4': 'コンドル', '-3': 'アルバトロス', '-2': 'イーグル', '-1': 'バーディー', '0': 'パー', '1': 'ボギー', '2': 'ダブルボギー', '3': 'トリプルボギー' };
   const term = (d) => TERMS[String(d)] || `+${d}`;
   const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Blender のアニメーションのタイミング（秒）と、クラブごとのボール位置（ゴルファーの足元基準：x=目標方向, z=前方）
+  const ANIM = {
+    swing: { top: 28 / 30, imp: 40 / 30, end: 62 / 30, down: 250, follow: 900 },
+    putt: { top: 16 / 30, imp: 28 / 30, end: 40 / 30, down: 320, follow: 650 },
+  };
+  const BALL_AT = { Iron: [0.0, 0.735], Driver: [0.1, 1.022], Putter: [0.0, 0.492] };
+  const clubKind = (c) => c.putter ? 'Putter' : ['1W', '5W', 'UT'].includes(c.id) ? 'Driver' : 'Iron';
+  const bgm = (fn, ...a) => { if (window.GolfBGM && opts && opts.bgm && opts.bgm()) window.GolfBGM[fn](...a); };
 
   let W = null;      // GolfScene.world()
   let G = null;      // ゲームの状態
@@ -104,6 +112,61 @@
     };
   }
 
+  /* ---------- 3D：Blender で作ったゴルファー（スキンメッシュ＋スイングアニメーション） ---------- */
+  function loadGolferModel(THREE, wear, onReady) {
+    const b64 = window.GOLFER_GLB_BASE64;
+    const Loader = window.THREE_ADDONS && window.THREE_ADDONS.GLTFLoader;
+    if (!b64 || !Loader) return;
+    try {
+      const bin = atob(b64);
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      new Loader().parse(buf.buffer, '', (gltf) => {
+        const root = new THREE.Group();
+        root.add(gltf.scene);
+        const clubs = {};
+        gltf.scene.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
+            if (o.material && o.material.name === 'Shirt') { o.material = o.material.clone(); o.material.color.set(wear); }
+          }
+          if (/^Club(Iron|Driver|Putter)$/.test(o.name)) clubs[o.name.slice(4)] = o;
+        });
+        const mixer = new THREE.AnimationMixer(gltf.scene);
+        const clip = (n) => gltf.animations.find(a => a.name === n || a.name.endsWith('|' + n));
+        const acts = {};
+        for (const n of ['Swing', 'Putt']) {
+          const c = clip(n);
+          if (!c) continue;
+          const a = mixer.clipAction(c);
+          a.play(); a.paused = true; a.setEffectiveWeight(0);
+          acts[n] = a;
+        }
+        let cur = null;
+        const api = {
+          root, model: true,
+          setClub(kind) {
+            Object.entries(clubs).forEach(([k, o]) => { o.visible = k === kind; });
+            const want = kind === 'Putter' ? 'Putt' : 'Swing';
+            if (cur !== want) {
+              Object.entries(acts).forEach(([k, a]) => a.setEffectiveWeight(k === want ? 1 : 0));
+              cur = want;
+            }
+          },
+          pose(theta, t) {
+            const a = acts[cur];
+            if (!a) return;
+            a.time = Math.max(0, Math.min(a.getClip().duration, t || 0));
+            mixer.update(0);
+          },
+        };
+        api.setClub('Iron');
+        api.pose(0, 0);
+        onReady(api);
+      }, () => {});
+    } catch (e) { /* 読み込めなければ簡易モデルのまま */ }
+  }
+
   function makeTrail(THREE) {
     const N = 90;
     const geo = new THREE.BufferGeometry();
@@ -128,6 +191,14 @@
     const THREE = W.THREE;
     const ball = W.makeBall(THREE, BALL_R, opts.ballColor());
     const golfer = makeGolfer(THREE, opts.wearColor());
+    // 本物のゴルファーを読み込めたら差し替える
+    loadGolferModel(THREE, opts.wearColor(), (model) => {
+      if (!objs) return;
+      objs.group.remove(objs.golfer.root);
+      objs.group.add(model.root);
+      objs.golfer = model;
+      if (G) placeGolfer();
+    });
     const trail = makeTrail(THREE);
     const ring = new THREE.Mesh(new THREE.RingGeometry(1.4, 1.9, 40), new THREE.MeshBasicMaterial({ color: 0xf2b705, transparent: true, opacity: 0.9, depthTest: false }));
     ring.rotation.x = -Math.PI / 2; ring.renderOrder = 10;
@@ -235,6 +306,7 @@
     W.flag.setPin(G.pin.x, G.pin.z);
     W.flag.setWind(Math.atan2(-G.wind.z, G.wind.x));
     W.flag.group.visible = true;
+    W.flag.group.scale.setScalar(0.5);   // プレー中は実寸に近い旗竿に
     G.length = dist2(G.ball, G.pin);
     prepareShot(true);
     G.phase = 'intro';
@@ -254,6 +326,7 @@
     objs.trail.reset();
     G.phase = 'aim';
     G.power = 0; G.p = 0;
+    bgm('duck', false);
     renderHud();
   }
 
@@ -266,9 +339,22 @@
   function placeGolfer() {
     const d = dirOf(G.yaw);
     const f = { x: -d.z, z: d.x };             // ゴルファーの向き（目標線の右向き）
+    const gr = objs.golfer;
+    G.swing = { theta: 0, anim: null };
+    G.animT = 0;
+    if (gr.model) {
+      const kind = clubKind(G.club);
+      const [ox, oz] = BALL_AT[kind];
+      const gx = G.ball.x - d.x * ox - f.x * oz, gz = G.ball.z - d.z * ox - f.z * oz;
+      gr.root.position.set(gx, groundY(gx, gz) + (G.lie === 'tee' ? 0 : 0), gz);
+      gr.root.rotation.y = Math.atan2(f.x, f.z);
+      gr.setClub(kind);
+      gr.pose(0, 0);
+      gr.root.visible = true;
+      return;
+    }
     const off = G.club.putter ? 0.55 : 0.72;
     const gx = G.ball.x - f.x * off, gz = G.ball.z - f.z * off;
-    const gr = objs.golfer;
     gr.root.position.set(gx, groundY(gx, gz), gz);
     gr.root.rotation.y = Math.atan2(f.x, f.z);
     // 肩からボールまでの長さに合わせてクラブの角度を決める
@@ -278,7 +364,6 @@
     gr.setClubLen(Math.max(0.3, Math.hypot(reach, shoulderY) - 0.6 - 0.02));
     gr.pose(0);
     gr.root.visible = true;
-    G.swing = { theta: 0, anim: null };
   }
 
   /* ---------- 入力 ---------- */
@@ -324,7 +409,8 @@
     if (opts.onEvent) opts.onEvent({ type: 'shot' });
     const d = dirOf(G.yaw);
     const right = { x: -d.z, z: d.x };
-    G.swing.anim = { start: performance.now(), top: G.swing.theta };
+    G.swing.anim = { start: performance.now(), top: G.swing.theta, topT: G.animT || 0 };
+    bgm('duck', true);
     objs.marker.visible = false; objs.aimLine.visible = false;
 
     if (c.putter) {
@@ -437,12 +523,14 @@
     G.holedAt = performance.now();
     G.chip = !G.putt;
     sfx('cup');
+    bgm('jingle', 'cupin');
     objs.ball.position.set(G.pin.x, groundY(G.pin.x, G.pin.z) + BALL_R, G.pin.z);
   }
 
   function penalty(kind, from) {
     G.strokes++;
     sfx('bad');
+    bgm('jingle', 'miss');
     if (kind === 'ob') {
       G.ball = { x: G.prev.x, z: G.prev.z };
       showMsg('OB', `1打罰で元の場所から打ち直し。次は${G.strokes + 1}打目`, 'bad', 2600);
@@ -503,7 +591,7 @@
       if (opts.onEvent) opts.onEvent({ type: 'drive', yards: res.fair && !res.fail ? res.yards : 0 });
     }
     const good = (G.mode === 'nearpin' && !res.fail && (res.holed || res.dist <= 5)) || (G.mode === 'drive' && res.fair && res.yards >= 200);
-    if (good) { sfx('cheer'); if (window.GolfFX) window.GolfFX.confetti(); }
+    if (good) { sfx('cheer'); bgm('jingle', 'fanfare'); if (window.GolfFX) window.GolfFX.confetti(); }
     showMsg(title, sub, res.fail ? 'bad' : 'good', 2200);
   }
 
@@ -521,7 +609,7 @@
     G.phase = 'hole-end';
     const hio = !gaveUp && strokes === 1;
     if (opts.onEvent) opts.onEvent({ type: 'hole', par: G.par, strokes, diff, chipin: !gaveUp && G.chip && strokes > 1, hio });
-    if (diff <= -1 || hio) { sfx('cheer'); if (window.GolfFX) window.GolfFX.confetti(); }
+    if (diff <= -1 || hio) { sfx('cheer'); bgm('jingle', 'fanfare'); if (window.GolfFX) window.GolfFX.confetti(); }
     const name = hio ? 'ホールインワン！' : term(diff);
     const chip = !gaveUp && G.chip && !hio ? 'チップイン！ ' : '';
     showOverlay(`
@@ -586,9 +674,11 @@
     const ease = (k) => 1 - Math.exp(-dt * k);
 
     // ゲージ
+    const A = G.club.putter ? ANIM.putt : ANIM.swing;
     if (G.phase === 'power') {
       G.p = Math.min(1, (now - G.t0) / 1050);
       G.swing.theta = -(G.club.putter ? 0.9 : 2.5) * G.p;
+      G.animT = A.top * G.p;
       if (G.p >= 1) {
         G.power = 1;
         if (G.club.putter) hit(0); else { G.phase = 'return'; G.t1 = now; }
@@ -598,8 +688,9 @@
       if (G.p <= -0.2) hit(-0.2);
     }
     if (G.phase === 'swing') {
-      const k = Math.min(1, (now - G.swing.anim.start) / 170);
+      const k = Math.min(1, (now - G.swing.anim.start) / A.down);
       G.swing.theta = G.swing.anim.top * (1 - k * k);
+      G.animT = G.swing.anim.topT + (A.imp - G.swing.anim.topT) * k * k;
       if (k >= 1) {
         if (G.pendingRoll) { G.pendingRoll = false; G.phase = 'roll'; G.rollStart = now; }
         else { G.phase = 'flight'; G.flight.t0 = now; objs.trail.reset(); }
@@ -607,10 +698,13 @@
     }
     // フォロースルー
     if (G.swing.anim && G.phase !== 'swing' && G.phase !== 'power' && G.phase !== 'return') {
-      const k = Math.min(1, (now - G.swing.anim.start - 170) / 420);
-      if (k > 0) G.swing.theta = (G.club.putter ? 0.8 : 2.7) * (1 - Math.pow(1 - k, 3));
+      const k = Math.min(1, (now - G.swing.anim.start - A.down) / A.follow);
+      if (k > 0) {
+        G.swing.theta = (G.club.putter ? 0.8 : 2.7) * (1 - Math.pow(1 - k, 3));
+        G.animT = A.imp + (A.end - A.imp) * (1 - Math.pow(1 - k, 2));
+      }
     }
-    objs.golfer.pose(G.swing.theta);
+    objs.golfer.pose(G.swing.theta, G.animT);
 
     // ボールの移動
     if (G.phase === 'flight') {
@@ -683,7 +777,8 @@
       tgt.set(p.x, p.y, p.z);
       cam.position.lerp(tgt, ease(G.phase === 'aim' ? 6 : 10));
       const lk = G.club.putter ? Math.min(dist2(G.ball, G.pin), 8) * 0.6 : 22;
-      tgt.set(b.x + d.x * lk, b.y + (G.club.putter ? -0.4 : -3.2), b.z + d.z * lk);
+      const sd = objs.golfer.model ? -BALL_AT[clubKind(G.club)][1] * 0.45 : 0;
+      tgt.set(b.x + d.x * lk - d.z * sd, b.y + (G.club.putter ? -0.3 : -2.4), b.z + d.z * lk + d.x * sd);
       objs.look.lerp(tgt, ease(8));
     } else if (G.phase === 'flight' || G.phase === 'roll' || G.phase === 'rest-wait' || G.phase === 'holed') {
       if (!G.putt) {
@@ -702,7 +797,10 @@
 
   function aimCam(d, b) {
     const putt = G.club.putter;
-    const back = putt ? 4.2 : 7.5, up = putt ? 2.1 : 3.1, side = putt ? 1.0 : 1.1;
+    // ゴルファーとボールの中間の後ろから映す（右打ちのゴルファーは目標線の左側に立つ）
+    const model = objs && objs.golfer && objs.golfer.model;
+    const oz = model ? BALL_AT[clubKind(G.club)][1] : 0.7;
+    const back = putt ? 3.6 : 5.6, up = putt ? 1.9 : 2.4, side = model ? -oz * 0.45 : (putt ? 1.0 : 1.1);
     const x = b.x - d.x * back - d.z * side, z = b.z - d.z * back + d.x * side;
     return { x, y: Math.max(b.y + up, groundY(x, z) + 1.2), z };
   }

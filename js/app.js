@@ -27,7 +27,7 @@
     return {
       profile: { name: '', start: t, debut: addDays(t, 90), confirmed: false },
       done: {}, logs: [], checklist: {}, quizBest: null, puttBest: null, puttRounds: 0, tempoReps: 0, theme: 'system',
-      xp: 0, badges: {}, daily: { date: '', counts: {}, claimed: {} }, cosmetic: { ball: 'white', wear: 'pine' }, sound: true,
+      xp: 0, badges: {}, daily: { date: '', counts: {}, claimed: {} }, cosmetic: { ball: 'white', wear: 'pine' }, sound: true, bgm: true,
       game: { roundBest: null, nearpinBest: null, driveBest: null, tutorialSeen: false, holes: 0 },
     };
   }
@@ -192,6 +192,7 @@
       <button class="btn btn-primary btn-block" data-action="lu-close">やった！</button></div>`;
     el.hidden = false;
     confetti();
+    if (window.GolfBGM && S.bgm !== false) window.GolfBGM.jingle('fanfare');
     setTimeout(() => { const b = el.querySelector('button'); if (b) b.focus(); }, 50);
   }
   function confetti() {
@@ -1076,7 +1077,7 @@
     return `<div class="page">
       ${playerCard()}
       <section class="section" aria-labelledby="gm">
-        <div class="section-head"><h2 id="gm">ゲームモード</h2><button class="more" data-action="sound">効果音：${S.sound ? 'ON' : 'OFF'}</button></div>
+        <div class="section-head"><h2 id="gm">ゲームモード</h2><span class="chip-row"><button class="more" data-action="bgm">BGM：${S.bgm !== false ? 'ON' : 'OFF'}</button><button class="more" data-action="sound">効果音：${S.sound ? 'ON' : 'OFF'}</button></span></div>
         <div class="mode-grid">${modes.map(([r, t, d, b, i, c]) => `<a class="mode" href="#${r}">
           <span class="ic ${c}">${icon(i)}</span><span class="t">${t}</span><span class="d">${d}</span><span class="best num">${b}</span></a>`).join('')}</div>
       </section>
@@ -1105,6 +1106,7 @@
     window.GolfGame.mount($('#game-stage'), {
       mode,
       sound: () => S.sound !== false,
+      bgm: () => S.bgm !== false,
       ballColor, wearColor,
       skill: () => skillOf(level()),
       showTutorial: !S.game.tutorialSeen,
@@ -1173,6 +1175,7 @@
       </section>
       <section class="card section">
         <h2 style="font-size:18px;font-weight:900">表示</h2>
+        <div class="chip-row" role="group" aria-label="BGM"><button class="chip" data-action="bgm" aria-pressed="${S.bgm !== false}">BGM ${S.bgm !== false ? 'ON' : 'OFF'}</button><button class="chip" data-action="sound" aria-pressed="${!!S.sound}">効果音 ${S.sound ? 'ON' : 'OFF'}</button></div>
         <div class="chip-row" role="group" aria-label="テーマ">${[['system', '端末に合わせる'], ['light', 'ライト'], ['dark', 'ダーク']].map(([k, l]) => `<button class="chip" data-theme-set="${k}" aria-pressed="${S.theme === k}">${l}</button>`).join('')}</div>
       </section>
       <section class="card section">
@@ -1220,6 +1223,12 @@
     else if (r.startsWith('drill-')) html = viewDrill(r.slice(6));
     else { const v = VIEWS[r] || VIEWS.home; if (!VIEWS[r]) route = 'home'; html = v[0](); after = v[1]; }
     appbar(); tabbar();
+    if (window.GolfBGM) {
+      window.GolfBGM.setEnabled(S.bgm !== false);
+      if (route.startsWith('game-')) window.GolfBGM.play('course');
+      else if (route === 'play' || route === 'putting') window.GolfBGM.play('menu');
+      else window.GolfBGM.stop();
+    }
     const main = $('#main');
     main.innerHTML = html;
     if (after) after();
@@ -1269,6 +1278,10 @@
       case 'next-trivia': triviaIdx = (triviaIdx + 1) % D.trivia.length; track('trivia'); gain(2, '', true); render(true); break;
       case 'lu-close': $('#levelup').hidden = true; if (!route.startsWith('game-') && route !== 'putting') render(true); break;
       case 'sound': S.sound = !S.sound; save(); render(true); break;
+      case 'bgm':
+        S.bgm = S.bgm === false; save();
+        if (window.GolfBGM) window.GolfBGM.setEnabled(S.bgm);
+        render(true); break;
       case 'shuffle': triviaOrder = D.trivia.map((_, i) => i).sort(() => Math.random() - 0.5); render(true); break;
       case 'overview': window.GolfScene.resetView(); break;
       case 'quiz-start': newQuiz(); render(); break;

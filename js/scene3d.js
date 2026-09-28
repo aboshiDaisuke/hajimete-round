@@ -415,7 +415,7 @@
       m.castShadow = true;
       group.add(m);
     };
-    mk(0x2f6fd6, -3.2); mk(0x2f6fd6, 3.2);
+    mk(0x2f6fd6, -4.6); mk(0x2f6fd6, 4.6);
     // ショートホール用ティーのマーカー（グリーン方向に向けて並べる）
     const t2 = TEES[1], y2 = height(t2.x, t2.z);
     const a = Math.atan2(GX - t2.x, GREEN_Z - t2.z);
@@ -794,7 +794,7 @@
       state.onSelect = opts.onSelect || null;
       state.onFrame = opts.onFrame || null;
       state.teeBall.visible = state.mode !== 'play';
-      if (state.mode !== 'play') { state.flag.setPin(CUP.x, CUP.z); state.flag.setWind(-0.5); }
+      if (state.mode !== 'play') { state.flag.setPin(CUP.x, CUP.z); state.flag.setWind(-0.5); state.flag.group.scale.setScalar(1); }
       container.prepend(state.renderer.domElement);
       requestAnimationFrame(() => container.classList.add('scene-ready'));
       if (state.controls) {

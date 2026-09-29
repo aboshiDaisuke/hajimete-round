@@ -114,15 +114,42 @@ def paste_hires_face(tex, cfg):
     sampled = np.zeros((len(P), 3), np.float32)
     x0 = np.floor(S[ok, 0]).astype(int); y0 = np.floor(S[ok, 1]).astype(int); fx = (S[ok, 0] - x0)[:, None]; fy = (S[ok, 1] - y0)[:, None]
     sampled[ok] = (hi[y0, x0] * (1 - fx) * (1 - fy) + hi[y0, x0 + 1] * fx * (1 - fy) + hi[y0 + 1, x0] * (1 - fx) * fy + hi[y0 + 1, x0 + 1] * fx * fy)
+    # 顔アップの背景（灰色）は貼らない：髪の外側の背景まで貼ると、横から見たときに灰色の筋になる
+    hfg, _, _ = segment(hi, hr.get('bg_dist', 14), 5000)
+    hfg = ndi.binary_erosion(hfg, iterations=3).astype(np.float32)
+    hfg = ndi.gaussian_filter(hfg, 2.0)
+    alpha_hi = np.zeros(len(P), np.float32)
+    alpha_hi[ok] = hfg[np.clip(np.round(S[ok, 1]).astype(int), 0, hi.shape[0] - 1), np.clip(np.round(S[ok, 0]).astype(int), 0, hi.shape[1] - 1)]
     # 色あわせ：マスクの内側で、設定画の色の平均・ばらつきに合わせる
     inner = mask[ys, xs] > 0.9
     if inner.sum() > 100:
         bm_, bs_ = base[ys, xs][inner].mean(0), base[ys, xs][inner].std(0) + 1e-3
         hm_, hs_ = sampled[inner].mean(0), sampled[inner].std(0) + 1e-3
         sampled = (sampled - hm_) * np.clip(bs_ / hs_, 0.8, 1.25) + bm_
-    m = (mask[ys, xs] * ok)[:, None]
+    m = (mask[ys, xs] * ok * alpha_hi)[:, None]
     out = base.copy()
     out[ys, xs] = base[ys, xs] * (1 - m) + sampled * m
+    return out
+
+
+def diffuse_fill(im, core):
+    """人物の外側（背景）を、まわりの人物の色をなめらかに広げてうめる。
+       いちばん近い色をそのまま伸ばすと、放射状の筋になり、はみ出した面に筋が写る。
+       小さいぼかしから順に「重みつき平均」を作り、届いたところから採用する"""
+    out = np.zeros_like(im)
+    filled = core.copy()
+    out[core] = im[core]
+    w = core.astype(np.float32)
+    for sigma in (3, 8, 20, 50, 120):
+        den = ndi.gaussian_filter(w, sigma)
+        num = np.stack([ndi.gaussian_filter(im[..., c] * w, sigma) for c in range(3)], -1)
+        est = num / np.maximum(den[..., None], 1e-6)
+        ok = (den > 0.06) & ~filled
+        out[ok] = est[ok]
+        filled |= ok
+    if not filled.all():                                   # 念のため、残りは一番近い色
+        idx = ndi.distance_transform_edt(~filled, return_distances=False, return_indices=True)
+        out[~filled] = out[idx[0][~filled], idx[1][~filled]]
     return out
 
 
@@ -140,6 +167,11 @@ def build(name):
     s = SHOULDER_Z / (fy1 - cfg['shoulder_y'])           # 1ピクセルあたりのメートル
     print(name, 'scale m/px', round(s, 5), 'height m', round((fy1 - fy0) * s, 3))
     fm, sm = lab == fk, lab == sk
+    # 髪のほつれ（細い毛）は体の形に入れない。入れると、頭のふちが灰色の背景をまとった細い毛の色を拾って、横から見たときに筋になる
+    disk = np.hypot(*np.mgrid[-6:7, -6:7]) <= 6
+    neck_row = cfg['neck_y']
+    for m_ in (fm, sm):
+        m_[:neck_row] = ndi.binary_opening(m_, structure=disk)[:neck_row]
     cx_f, xr_s = cfg['front']['cx'], cfg['side']['xref']
 
     # ---- 体積（ボクセル）----
@@ -164,22 +196,48 @@ def build(name):
         if (a - cx_f) * s <= 0 <= (b + 1 - cx_f) * s:
             hw_arm = min(abs((a - cx_f) * s), abs((b + 1 - cx_f) * s)) * 1.02
     b0, b1 = cfg['brim_rows']
+    # 行ごとの前後の範囲（横の絵）と、胴の中心の左右の範囲（正面の絵）。頭では上下になめらかにする。
+    # 1行ずつの値をそのまま使うと、くちびる・まつげ・つばのくぼみの行だけ頭全体の楕円が小さくなり、
+    # 頭を一周する溝（横から見ると線）になるため
+    YA = np.full(H, np.nan); YB = np.full(H, np.nan); XL = np.full(H, np.nan); XR = np.full(H, np.nan)
+    cf = cfg['brim_front_y']
+    for py in range(fy0, fy1 + 1):
+        sr = runs_of(sm[py])
+        if sr:
+            ya = min((a - xr_s) * s for a, b in sr); yb = max((b + 1 - xr_s) * s for a, b in sr)
+            if b0 <= py <= b1:                            # バイザー・帽子のつばは別パーツにするので、胴体からは外す
+                ya = max(ya, cf)
+            elif b1 < py <= b1 + 14:                      # つばの上下は、段差にならないよう斜めにつなぐ
+                ya = max(ya, cf + (front_at(b1 + 14) - cf) * (py - b1) / 14)
+            elif b0 - 14 <= py < b0:
+                ya = max(ya, cf + (front_at(b0 - 14) - cf) * (b0 - py) / 14)
+            YA[py], YB[py] = ya, yb
+        for a, b in runs_of(fm[py]):
+            if (a - cx_f) * s <= 0 <= (b + 1 - cx_f) * s:
+                XL[py], XR[py] = (a - cx_f) * s, (b + 1 - cx_f) * s
+    head_end = cfg['neck_y'] + 6
+    def smooth_rows(arr, sigma):
+        v = arr.copy()
+        ok_ = ~np.isnan(v)
+        idx_ = np.arange(H)
+        v[~ok_] = np.interp(idx_[~ok_], idx_[ok_], v[ok_])
+        sm_ = ndi.gaussian_filter1d(ndi.median_filter(v, size=5), sigma)
+        w_ = np.clip((head_end + 8 - idx_) / 8.0, 0, 1)            # 頭だけ（首の少し下で元の値に戻す）
+        out_ = v * (1 - w_) + sm_ * w_
+        out_[~ok_] = np.nan
+        return out_
+    YA, YB = smooth_rows(YA, 4.0), smooth_rows(YB, 4.0)
+    XL, XR = smooth_rows(XL, 2.5), smooth_rows(XR, 2.5)
     for k, z in enumerate(Z):
         py = int(round(fy1 - z / s))
         if py < fy0 or py > fy1:
             continue
         fr = [((a - cx_f) * s, (b + 1 - cx_f) * s) for a, b in runs_of(fm[py])]
-        sr = runs_of(sm[py])
-        if not fr or not sr:
+        if not fr or np.isnan(YA[py]):
             continue
-        ya = min((a - xr_s) * s for a, b in sr); yb = max((b + 1 - xr_s) * s for a, b in sr)
-        cf = cfg['brim_front_y']
-        if b0 <= py <= b1:                                # バイザー・帽子のつばは別パーツにするので、胴体からは外す
-            ya = max(ya, cf)
-        elif b1 < py <= b1 + 14:                          # つばの上下は、段差にならないよう斜めにつなぐ
-            ya = max(ya, cf + (front_at(b1 + 14) - cf) * (py - b1) / 14)
-        elif b0 - 14 <= py < b0:
-            ya = max(ya, cf + (front_at(b0 - 14) - cf) * (b0 - py) / 14)
+        if py < head_end + 8 and not np.isnan(XL[py]):
+            fr = [(XL[py], XR[py]) if (x0 <= 0 <= x1) else (x0, x1) for x0, x1 in fr]
+        ya, yb = YA[py], YB[py]
         yc, yh = (ya + yb) / 2, (yb - ya) / 2
         u = (fy1 - py) * s
         for x0, x1 in fr:
@@ -202,7 +260,10 @@ def build(name):
                 byc = arm_y(z)
                 n_, bh = 2.1, xh * 1.1
                 if z < 0.9:
-                    bh = xh * 0.6                              # 手は平たい
+                    bh, n_ = xh * 0.82, 2.0                    # 手：少し平たい丸（薄い板にすると、斜めから見て箱のように見える）
+            elif abs(xc) > cfg['hip_dx'] * s + 0.1:       # 股より下にたれた手（あしの扱いにすると、横の奥行きいっぱいの板になる）
+                byc = arm_y(z)
+                n_, bh = 2.0, xh * 0.82
             else:                                          # あし
                 n_, bh, byc = 2.3, yh, yc
             bh = max(bh, 0.012)
@@ -215,9 +276,27 @@ def build(name):
     print('mesh', len(verts), len(faces))
 
     # ---- テクスチャ：背景を人物の色でうめる（にじみ防止）。顔は高解像度の顔アップに差し替える ----
-    core = ndi.binary_erosion(fg, iterations=3)
-    idx = ndi.distance_transform_edt(~core, return_distances=False, return_indices=True)
-    tex = im[idx[0], idx[1]]
+    # 髪と首・ほほの間に閉じこめられた背景（穴うめで人物あつかいになった灰色）は、テクスチャの色に使わない
+    border_ = np.concatenate([im[:8].reshape(-1, 3), im[-8:].reshape(-1, 3), im[:, :8].reshape(-1, 3), im[:, -8:].reshape(-1, 3)])
+    bgc = np.median(border_, axis=0)
+    bg_like = (np.sqrt(((im - bgc) ** 2).sum(2)) < cfg.get('bg_dist', 16) * 1.6) & ((im.max(2) - im.min(2)) < 12)
+    bg_like[cfg['shoulder_y']:] = False                      # 服（白いスカート・えり）は背景に近い色でも残す
+    if cfg.get('head_bg'):                                  # 頭：髪のすき間から背景が透けた、少し色のついた灰色も背景あつかい
+        hd, hc = cfg['head_bg']
+        hb = (np.sqrt(((im - bgc) ** 2).sum(2)) < hd) & ((im.max(2) - im.min(2)) < hc)
+        hb[cfg['neck_y'] + 4:] = False
+        bg_like |= hb
+    bg_like = ndi.binary_dilation(bg_like, iterations=2)
+    core = ndi.binary_erosion(fg & ~bg_like, iterations=3)
+    tex = diffuse_fill(im, core)
+    # 横向きの絵の目・眉・口を消す（横の絵を頭の側面いっぱいに使うと、正面から見たときに横顔の目が端に写り込むため）
+    from skimage.restoration import inpaint_biharmonic
+    for ecx, ecy, erx, ery in cfg.get('side_erase', []):
+        x0_, x1_, y0_, y1_ = int(ecx - erx - 12), int(ecx + erx + 12), int(ecy - ery - 12), int(ecy + ery + 12)
+        crop = tex[y0_:y1_, x0_:x1_] / 255.0
+        yy_, xx_ = np.mgrid[y0_:y1_, x0_:x1_]
+        msk = (((xx_ - ecx) / erx) ** 2 + ((yy_ - ecy) / ery) ** 2) <= 1.0
+        tex[y0_:y1_, x0_:x1_] = np.clip(inpaint_biharmonic(crop, msk, channel_axis=-1), 0, 1) * 255.0
     if cfg.get('hires_head'):
         tex = paste_hires_face(tex, cfg)
     os.makedirs(BUILD, exist_ok=True)
@@ -236,7 +315,29 @@ def build(name):
     c_ = im[py_ - 5:py_ + 6, px_ - 5:px_ + 6].reshape(-1, 3).mean(0)
     J['skin'] = '#%02x%02x%02x' % tuple(int(v) for v in c_)
     json.dump(J, open(os.path.join(BUILD, name + '_joints.json'), 'w'), indent=1)
-    np.savez_compressed(os.path.join(BUILD, name + '_mesh.npz'), verts=verts.astype(np.float32), faces=faces.astype(np.int32),
+    # 頭のふちの色を拾わないための、各行の「髪のいちばん外側」（設定画のピクセル）。UV をこの内側に収める
+    def extents(mask):
+        ex = np.zeros((H, 2), np.float32)
+        ex[:, 1] = W
+        for r_ in range(H):
+            xs_ = np.where(mask[r_])[0]
+            if len(xs_):
+                ex[r_] = (xs_[0], xs_[-1] + 1)
+        return ex
+    bm_mask = lab == bk
+    def central_extents(mask, cx):
+        """各行で、体の中心線をふくむ区間（胴・スカート）の左右のはし"""
+        ex = np.full((H, 2), np.nan, np.float32)
+        c_ = int(round(cx))
+        for r_ in range(H):
+            for a_, b_ in runs_of(mask[r_]):
+                if a_ <= c_ <= b_:
+                    ex[r_] = (a_, b_ + 1)
+        return ex
+    for m_ in (bm_mask,):
+        m_[:neck_row] = ndi.binary_opening(m_, structure=disk)[:neck_row]
+    np.savez_compressed(os.path.join(BUILD, name + '_mesh.npz'), side_rr=cfg.get('side_rr', 0.85),
+                        brim_z0=(fy1 - cfg['brim_rows'][0]) * s, pit_z=(fy1 - cfg['armpit_y']) * s, shoulder_x=abs(J['shoulder.L'][0]), shoulder_z=J['shoulder.L'][2], cext_f=central_extents(fm, cx_f), cext_b=central_extents(lab == bk, cfg['back']['cx']), shtop_z=(fy1 - cfg.get('sh_top_y', cfg['neck_y'] + 10)) * s, ext_f=extents(fm), ext_s=extents(sm), ext_b=extents(bm_mask), verts=verts.astype(np.float32), faces=faces.astype(np.int32),
                         hw=hw, dz=dx, s=s, cx_f=cx_f, xr_s=xr_s, cx_b=cfg['back']['cx'], gf=fy1, gs=sy1, gb=by1, W=W, H=H,
                         neck_z=(fy1 - cfg['neck_y']) * s,
                         face_z_lo=(fy1 - cfg['mouth'][1]) * s - 0.05, face_z_hi=(fy1 - cfg['eyes'][0][1]) * s + 0.06,

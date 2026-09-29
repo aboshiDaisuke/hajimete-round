@@ -1,115 +1,129 @@
 {
- "name": "male",
- "sheet": "tools/sheets/male.png",
- "bg_dist": 16,
- "shoulder_y": 235,
- "front": {
-  "cx": 290
- },
- "side": {
-  "xref": 775
- },
- "back": {
-  "cx": 1233
- },
- "split_y": 508,
- "arm_y": [
-  [
-   0.85,
-   -0.015
+  "name": "male",
+  "sheet": "tools/sheets/male.png",
+  "bg_dist": 16,
+  "shoulder_y": 235,
+  "front": {
+    "cx": 290
+  },
+  "side": {
+    "xref": 775
+  },
+  "back": {
+    "cx": 1233
+  },
+  "split_y": 508,
+  "arm_y": [
+    [
+      0.85,
+      -0.015
+    ],
+    [
+      1.0,
+      -0.01
+    ],
+    [
+      1.1,
+      0.03
+    ],
+    [
+      1.22,
+      0.027
+    ],
+    [
+      1.4,
+      0.005
+    ]
   ],
-  [
-   1.0,
-   -0.01
+  "brim_rows": [
+    54,
+    112
   ],
-  [
-   1.1,
-   0.03
-  ],
-  [
-   1.22,
-   0.027
-  ],
-  [
-   1.4,
-   0.005
-  ]
- ],
- "brim_rows": [
-  54,
-  112
- ],
- "brim_front_y": -0.14,
- "neck_y": 195,
- "sh_top_y": 205,
- "armpit_y": 345,
- "head_side_y": 0.0,
- "joints_y": {
-  "pelvis": 468,
-  "spine": 395,
-  "chest": 305,
-  "neck": 200,
-  "head": 172,
-  "headtop": 13,
-  "shoulder": 235,
-  "elbow": 345,
-  "wrist": 452,
-  "hand": 500,
-  "hip": 468,
-  "knee": 690,
-  "ankle": 880,
-  "toe": 940
- },
- "shoulder_dx": 97,
- "hip_dx": 55,
- "knee_y": -0.04,
- "toe_y": -0.21,
- "eyes": [
-  [
-   262.5,
-   118
-  ],
-  [
-   315,
-   118
-  ]
- ],
- "mouth": [
-  289,
-  152
- ],
- "skin_px": [
-  330,
-  138
- ],
- "brim": {
-  "base_y": -0.147,
-  "base_z_px": 62,
-  "tip_y": -0.261,
-  "tip_z_px": 72,
-  "half_w_px": 55
- },
- "hand_rows": [
-  450,
-  570
- ],
- "hires_head": {
-  "file": "tools/sheets/head_male.png",
+  "brim_front_y": -0.14,
+  "neck_y": 195,
+  "sh_top_y": 205,
+  "armpit_y": 345,
+  "head_side_y": 0.0,
+  "joints_y": {
+    "pelvis": 468,
+    "spine": 395,
+    "chest": 305,
+    "neck": 200,
+    "head": 172,
+    "headtop": 13,
+    "shoulder": 235,
+    "elbow": 345,
+    "wrist": 452,
+    "hand": 500,
+    "hip": 468,
+    "knee": 690,
+    "ankle": 880,
+    "toe": 940
+  },
+  "shoulder_dx": 97,
+  "hip_dx": 55,
+  "knee_y": -0.04,
+  "toe_y": -0.21,
   "eyes": [
-   [
-    499,
-    550
-   ],
-   [
-    752,
-    541
-   ]
+    [
+      262.5,
+      118
+    ],
+    [
+      315,
+      118
+    ]
   ],
   "mouth": [
-   627,
-   722
+    289,
+    152
+  ],
+  "skin_px": [
+    330,
+    138
+  ],
+  "brim": {
+    "base_y": -0.147,
+    "base_z_px": 62,
+    "tip_y": -0.261,
+    "tip_z_px": 72,
+    "half_w_px": 55
+  },
+  "hand_rows": [
+    450,
+    570
+  ],
+  "hires_head": {
+    "file": "tools/sheets/head_male.png",
+    "eyes": [
+      [
+        499,
+        550
+      ],
+      [
+        752,
+        541
+      ]
+    ],
+    "mouth": [
+      627,
+      722
+    ]
+  },
+  "face_rx": 1.2,
+  "face_ry": 1.12,
+  "side_erase": [
+    [
+      716,
+      110,
+      22,
+      22
+    ],
+    [
+      706,
+      152,
+      18,
+      9
+    ]
   ]
- },
- "face_rx": 1.2,
- "face_ry": 1.12
 }

@@ -13,7 +13,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 ASSETS = os.path.join(ROOT, 'assets')
 BUILD = os.path.join(ROOT, 'tools', 'build')
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
-from sheet_uv import assign_uvs
+from sheet_uv import assign_uvs, assign_uvs3
 CH = os.environ.get('CHARACTER', 'female')
 CHECK = 'check' in sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else False
 OUT_CHECK = os.environ.get('GOLFER_CHECK_DIR', os.path.join(ROOT, 'dist', 'golfer_check'))
@@ -95,8 +95,11 @@ me = body.data
 BV = np.zeros(len(me.vertices) * 3, np.float32); me.vertices.foreach_get('co', BV); BV = BV.reshape(-1, 3)
 BF = np.zeros(len(me.polygons) * 3, np.int32); me.polygons.foreach_get('vertices', BF); BF = BF.reshape(-1, 3)
 print('BODY faces', len(BF), 'verts', len(BV))
-uvs = assign_uvs(BV, BF, MESH)
-me.uv_layers.new(name='UV').data.foreach_set('uv', uvs.reshape(-1, 2).ravel())
+# 3つの UV：正面の絵（UV）・背面の絵（UVB）・横の絵（UVS）。アプリのシェーダーが面の向きで混ぜる
+uvF, uvB, uvS = assign_uvs3(BV, BF, MESH)
+for nm_, uv_ in (('UV', uvF), ('UVB', uvB), ('UVS', uvS)):
+    me.uv_layers.new(name=nm_).data.foreach_set('uv', uv_.reshape(-1, 2).ravel())
+me.uv_layers.active_index = 0
 M_BODY = bpy.data.materials.new('Body')
 M_BODY.use_nodes = True
 tex_img = bpy.data.images.load(os.path.join(BUILD, CH + '_tex.jpg'))
@@ -217,12 +220,28 @@ shoulder_z = J['shoulder.L'].z
 is_head = Zv > head_z
 is_neckzone = (Zv > neck_z - 0.02) & ~is_head
 below_hem = Zv < split_z - 0.005
-torso_hw_z = np.where((Zv > J['chest'].z - 0.1) & (Zv < neck_z), hw_torso, hwv)
+# 胴の半幅（わきの下〜肩）：設定画では袖・うでが胴にくっついて写っているので、その行の幅はうでまで含んでしまう。
+# わきの下のすぐ下（うでと胴のあいだにすき間がある高さ）の幅から、肩の関節の少し内側まで、なめらかに広げる
+z_pit = (float(MESH['gf']) - CFG['armpit_y']) * float(MESH['s'])
+hw_pit = float(np.interp(z_pit - 0.035, np.arange(len(MESH['hw'])) * dzz, MESH['hw']))
+k_sh = np.clip((Zv - (z_pit - 0.035)) / (shoulder_z - (z_pit - 0.035)), 0, 1)
+k_sh = k_sh * k_sh * (3 - 2 * k_sh)
+hw_upper = hw_pit + (abs(J['shoulder.L'].x) - 0.035 - hw_pit) * k_sh
+torso_hw_z = np.where((Zv > z_pit - 0.035) & (Zv < neck_z), hw_upper, hwv)
 leg_x_max = max(abs(J[f'{b}.L'].x) for b in ('hip', 'knee', 'ankle')) + 0.09     # 脚より外側にある手は、腕の一部
 arm_zone = (Zv > J['hand.L'].z - 0.16) & (~below_hem | (np.abs(Xv) > leg_x_max)) & ~is_head & ~is_neckzone
 # 胴と腕の境目はなめらかにつなぐ（急に切り替えると、肩まわりが板のように伸びる）
 t_arm = np.where(arm_zone, np.clip((np.abs(Xv) - (torso_hw_z - 0.02)) / 0.07, 0, 1), 0.0)
+# 胸より下（胴の横・スカート・ズボンの横）：胴の輪郭より外に出た手だけを腕にする。境目を胴の内側まで広げると、
+# 腕を上げたときにスカートのすそが引っぱられて、板のように持ち上がる
+low = Zv < z_pit - 0.04                        # わきの下より下（ここでは腕と胴のあいだにすき間がある）
+t_low = np.clip((np.abs(Xv) - (hwv + 0.045)) / 0.03, 0, 1)      # hwv は細いほうの半幅なので、広がったすそは少し外まで胴あつかい
+t_arm = np.where(arm_zone & low, t_low, t_arm)
 t_arm = t_arm * t_arm * (3 - 2 * t_arm)
+# 肩の後ろ（肩甲骨のあたり）は胴について動く。うでの重みがあると、うでを前に振ったときに背中から羽のように引き出される
+arm_cy = np.interp(Zv, [p_[0] for p_ in CFG['arm_y']], [p_[1] for p_ in CFG['arm_y']])
+behind = np.clip((Yv - arm_cy - 0.045) / 0.04, 0, 1) * (np.abs(Xv) < abs(J['shoulder.L'].x) + 0.03) * (Zv > z_pit - 0.05)
+t_arm = t_arm * (1 - behind)
 is_leg = below_hem & ~(t_arm > 0.5)
 bi = {n: i for i, n in enumerate(BONES)}
 
@@ -244,11 +263,19 @@ def norm_top(allow, k=3):
 
 
 A_head = cand_matrix(lambda sd, i: ['head'])
-A_neck = cand_matrix(lambda sd, i: ['neck', 'head', 'chest'])
-A_arm = cand_matrix(lambda sd, i: [f'clavicle.{sd}', f'upperarm.{sd}', f'forearm.{sd}', f'hand.{sd}', 'chest'])
+# 首のまわり：頭の骨はあごの下・首の上のほうだけ。首の後ろ・えりに頭の重みがあると、頭を回したときに背中が引っぱられて羽のように出る
+A_neck = cand_matrix(lambda sd, i: ['neck', 'head', 'chest'] if Zv[i] > neck_z + 0.035 else ['neck', 'chest'])
+# 鎖骨は肩の上だけ。わきの下やひじのあたりに鎖骨の重みがあると、腕を体の前で交差させたときに皮がはがれるように伸びる
+A_arm = cand_matrix(lambda sd, i: ([f'clavicle.{sd}'] if Zv[i] > shoulder_z - 0.08 else []) + [f'upperarm.{sd}', f'forearm.{sd}', f'hand.{sd}', 'chest'])
 A_leg = cand_matrix(lambda sd, i: [f'thigh.{sd}', f'shin.{sd}', f'foot.{sd}', 'hips'])
-A_tor = cand_matrix(lambda sd, i: ['hips', 'spine', 'chest', 'neck', 'clavicle.L', 'clavicle.R'])
+A_tor = cand_matrix(lambda sd, i: ['hips', 'spine', 'chest', 'neck'] + (['clavicle.L', 'clavicle.R'] if Zv[i] > shoulder_z - 0.08 else []))
 Wh, Wn, Wa, Wl, Wtor = (norm_top(m) for m in (A_head, A_neck, A_arm, A_leg, A_tor))
+# スカート・ズボンのすそまわり：ももの骨から離れた布は、腰について動く（左右のももに分けると、足を開いたときに裂けたり板のように広がる）
+d_thigh = np.minimum(D[:, bi['thigh.L']], D[:, bi['thigh.R']])
+t_cloth = np.clip((d_thigh - 0.075) / 0.05, 0, 1) * (Zv > J['knee.L'].z + 0.08)
+t_cloth = t_cloth * t_cloth * (3 - 2 * t_cloth)
+W_hips = np.zeros_like(Wl); W_hips[:, bi['hips']] = 1.0
+Wl = Wl * (1 - t_cloth[:, None]) + W_hips * t_cloth[:, None]
 Wt = np.where(is_head[:, None], Wh, np.where(is_neckzone[:, None], Wn, np.where(is_leg[:, None], Wl, t_arm[:, None] * Wa + (1 - t_arm[:, None]) * Wtor)))
 # 4本まで（glTF の上限）に絞って正規化
 idx = np.argsort(-Wt, axis=1)[:, :4]
@@ -647,11 +674,12 @@ bez(idle_action)
 cheer_action = new_action('Cheer')
 pose2(0, **A2, hips_move=(0, 0.055, -0.045), H=H0, C=C0, T=(0, -1, 0), head_turn=0)
 pose2(8, tilt=30, spine_tilt=18, hips_move=(0, 0.07, -0.15), H=(0.03, -0.27, 0.66), C=(0.12, -0.3, -0.94), T=(0, -1, 0), head_turn=0)
-pose2(16, tilt=-4, spine_tilt=-6, hips_move=(0, 0.02, 0.0), hop=0.16, H=(0.1, -0.4, 1.35), C=(0.7, 0.0, 0.7), T=(0, -1, 0), head_turn=0, head_tilt=-14)
-pose2(24, tilt=-6, spine_tilt=-8, hips_move=(0, 0.02, 0.0), hop=0.24, H=(0.12, -0.42, 1.5), C=(0.72, 0.0, 0.69), T=(0, -1, 0), head_turn=0, head_tilt=-18)
-pose2(32, tilt=4, spine_tilt=-2, hips_move=(0, 0.03, -0.09), H=(0.1, -0.4, 1.3), C=(0.7, 0.0, 0.7), T=(0, -1, 0), head_turn=0, head_tilt=-10)
-pose2(40, tilt=-2, spine_tilt=-5, hips_move=(0, 0.02, -0.03), H=(0.12, -0.41, 1.42), C=(0.72, 0.0, 0.69), T=(0, -1, 0), head_turn=0, head_tilt=-14)
-pose2(50, tilt=-3, spine_tilt=-6, hips_move=(0, 0.02, -0.012), H=(0.12, -0.42, 1.46), C=(0.74, 0.0, 0.67), T=(0, -1, 0), head_turn=0, head_tilt=-16)
+# クラブを構えたまま、背すじを伸ばして小さく跳ねる（腕を胸の前や頭の上に動かすと、体が潰れて見える）
+pose2(16, tilt=8, spine_tilt=4, hips_move=(0, 0.03, -0.02), hop=0.16, H=H0, C=C0, T=(0, -1, 0), head_turn=0, head_tilt=-8)
+pose2(24, tilt=6, spine_tilt=2, hips_move=(0, 0.03, -0.01), hop=0.24, H=H0, C=C0, T=(0, -1, 0), head_turn=0, head_tilt=-10)
+pose2(32, tilt=14, spine_tilt=8, hips_move=(0, 0.04, -0.07), H=H0, C=C0, T=(0, -1, 0), head_turn=0, head_tilt=-6)
+pose2(40, tilt=8, spine_tilt=4, hips_move=(0, 0.03, -0.03), H=H0, C=C0, T=(0, -1, 0), head_turn=0, head_tilt=-8)
+pose2(50, tilt=7, spine_tilt=3, hips_move=(0, 0.03, -0.012), H=H0, C=C0, T=(0, -1, 0), head_turn=0, head_tilt=-9)
 bez(cheer_action)
 
 sad_action = new_action('Sad')

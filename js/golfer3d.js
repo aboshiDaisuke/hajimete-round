@@ -30,15 +30,21 @@
   }
   // モデルのデータ（大きいので、選ばれたキャラの分だけ読み込む）
   const pending = {};
+  function loadScript(src, done) {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => done(true);
+    s.onerror = () => done(false);
+    document.head.appendChild(s);
+  }
   function ensureData(ch, cb) {
     if (W.GOLFER_GLBS && W.GOLFER_GLBS[ch]) return cb(true);
     if (pending[ch]) { pending[ch].push(cb); return; }
     pending[ch] = [cb];
-    const s = document.createElement('script');
-    s.src = `assets/golfer-${ch}-glb.js`;
-    s.onload = () => pending[ch].splice(0).forEach(f => f(true));
-    s.onerror = () => pending[ch].splice(0).forEach(f => f(false));
-    document.head.appendChild(s);
+    // 表情の絵（なくても動く）を先に読んでから、モデルを読む
+    loadScript(`assets/golfer-${ch}-face.js`, () => {
+      loadScript(`assets/golfer-${ch}-glb.js`, (ok) => pending[ch].splice(0).forEach(f => f(ok)));
+    });
   }
 
   // opts: { character: 'female' | 'male', wear: 色 または null（null なら設定画のまま） }
@@ -64,6 +70,19 @@
     const clubs = {}, parts = {}, skels = [];
     const wearU = { value: new THREE.Color(opts.wear || 0xffffff) };
     const useTint = opts.wear != null;
+    // 表情：目・口のところだけ、描き替えた絵（tools/face_states.py）に差し替える
+    const FACE = W.GOLFER_FACES && W.GOLFER_FACES[ch];
+    const eyeU = { uEye: { value: null }, uRect: { value: new THREE.Vector4(...(FACE ? FACE.rect : [0, 0, 1, 1])) }, uState: { value: 0 }, uMix: { value: 0 } };
+    if (FACE) {
+      const img = new Image();
+      img.onload = () => {
+        const t = new THREE.Texture(img);
+        t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true;
+        eyeU.uEye.value = t; eyeU.ready = true;
+        if (api && api.refreshFace) api.refreshFace();
+      };
+      img.src = 'data:image/png;base64,' + FACE.png;
+    }
     model.traverse((o) => {
       if (/^Club(Iron|Driver|Putter)$/.test(o.name)) clubs[o.name.slice(4)] = o;
       parts[o.name] = parts[o.name] || o;
@@ -73,18 +92,52 @@
       const old = o.material;
       if (old.map) {
         // 体：設定画のテクスチャをそのまま見せる（絵にすでに陰影があるので、光の計算はしない）
+        // 3つの UV（正面・背面・横の絵。tools/sheet_uv.py）があれば、面の向きでなめらかに混ぜる
+        const has3 = !!(o.geometry && o.geometry.attributes.uv1 && o.geometry.attributes.uv2);
         const m = new THREE.MeshBasicMaterial({ map: old.map });
         m.map.anisotropy = 4;
-        if (useTint) {
-          m.onBeforeCompile = (sh) => {
-            sh.uniforms.uWear = wearU;
-            sh.fragmentShader = 'uniform vec3 uWear;\n' + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+        m.onBeforeCompile = (sh) => {
+          Object.assign(sh.uniforms, eyeU);
+          if (useTint) sh.uniforms.uWear = wearU;
+          sh.uniforms.uBlend = { value: has3 ? 1 : 0 };
+          // 向きは、スイングで体が動いても変わらないよう、骨で動かす前の法線（objectNormal）で決める
+          sh.vertexShader = 'attribute vec2 uv1;\nattribute vec2 uv2;\nvarying vec2 vUvB;\nvarying vec2 vUvS;\nvarying vec3 vObjN;\nvarying vec3 vShadeN;\n' + sh.vertexShader
+            .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n  vObjN = objectNormal; vUvB = uv1; vUvS = uv2;')
+            .replace('#include <defaultnormal_vertex>', '#include <defaultnormal_vertex>\n  vShadeN = normalize(transformedNormal);');
+          sh.fragmentShader = 'varying vec2 vUvB;\nvarying vec2 vUvS;\nvarying vec3 vObjN;\nvarying vec3 vShadeN;\nuniform float uBlend;\nuniform sampler2D uEye; uniform vec4 uRect; uniform float uState; uniform float uMix;\n' + (useTint ? 'uniform vec3 uWear;\n' : '') +
+            sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+              if (uBlend > 0.5) {
+                vec3 on = normalize(vObjN);
+                // 前を向く面ほど正面の絵、後ろを向く面ほど背面の絵（頭は uvF と uvB が同じなので変わらない）
+                float wB = 1.0 - smoothstep(-0.28, 0.28, on.z);
+                if (wB > 0.001) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(map, vUvB).rgb, wB);
+                // 横の絵の重み：水平方向の向き（左右と前後の比）で決める。上下を向く成分は数えない。
+                // 上下の成分を入れると、あごの下など斜め下を向く面が、正面の絵のいちばん端（髪の輪郭）を拾って線になる。
+                // 真上・真下を向く面（頭のてっぺん）は水平の向きがあいまいなので、正面・背面の絵のままにする
+                if (vUvS.x < 1.5) {
+                  float hl = length(on.xz);
+                  vec2 h = abs(on.xz) / max(hl, 1e-4);
+                  float ps = pow(h.x, 5.0), pp = pow(h.y, 5.0);
+                  float wS = ps / max(ps + pp, 1e-5) * smoothstep(0.12, 0.35, hl);
+                  if (wS > 0.001) diffuseColor.rgb = mix(diffuseColor.rgb, texture2D(map, vUvS).rgb, wS);
+                }
+              }
+              if (uMix > 0.0) {
+                vec2 ep = (vMapUv - uRect.xy) / uRect.zw;
+                if (ep.x > 0.0 && ep.x < 1.0 && ep.y > 0.0 && ep.y < 1.0) {
+                  vec4 ef = texture2D(uEye, vec2((ep.x + uState) / 3.0, ep.y));
+                  diffuseColor.rgb = mix(diffuseColor.rgb, ef.rgb, ef.a * uMix);
+                }
+              }` + (useTint ? `
               vec3 tc = diffuseColor.rgb;
               float tl = dot(tc, vec3(0.2126, 0.7152, 0.0722));
               float tm = ${TINT_MASK[ch]};
-              diffuseColor.rgb = mix(tc, uWear * clamp(tl / ${TINT_BASE_LUM[ch].toFixed(3)}, 0.0, 1.7), tm);`);
-          };
-        }
+              diffuseColor.rgb = mix(tc, uWear * clamp(tl / ${TINT_BASE_LUM[ch].toFixed(3)}, 0.0, 1.7), tm);` : ''));
+          sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+              { vec3 sn = normalize(vShadeN);
+                float facing = clamp(sn.z + 0.22 * sn.y, 0.0, 1.0);
+                diffuseColor.rgb *= mix(0.70, 1.0, smoothstep(0.08, 0.62, facing)); }`);
+        };
         o.material = m;
       } else if (FLAT.has(old.name)) {
         o.material = new THREE.MeshBasicMaterial({ color: old.color.clone() });
@@ -120,21 +173,19 @@
       a.time = Math.max(0, Math.min(a.getClip().duration, time));
       mixer.update(0);
     }
-    // 表情：顔の絵の上に、目・口の部品を重ねて切り替える（ふだんは全部かくす）
-    const show = (names, v) => names.forEach((n) => { if (parts[n]) parts[n].visible = v; });
-    const COVERS = ['EyeCover1', 'EyeCover-1'], HAPPY = ['EyeHappy1', 'EyeHappy-1'], CLOSED = ['EyeClosed1', 'EyeClosed-1'];
-    const FACE_ALL = [...COVERS, ...HAPPY, ...CLOSED, 'MouthCover', 'MouthOpen', 'Tongue', 'MouthSad'];
+    // 表情：目・口の絵を差し替える（blink / happy / sad / それ以外は元の顔）
+    const FACE_STATE = { blink: 0, happy: 1, sad: 2 };
     function face(name) {
       if (expr === name) return;
       expr = name;
-      show(FACE_ALL, false);
-      if (name === 'blink') show([...COVERS, ...CLOSED], true);
-      else if (name === 'happy') show([...COVERS, ...HAPPY, 'MouthCover', 'MouthOpen', 'Tongue'], true);
-      else if (name === 'sad') show(['MouthCover', 'MouthSad'], true);
+      const st = FACE_STATE[name];
+      if (st == null || !eyeU.ready) { eyeU.uMix.value = 0; return; }
+      eyeU.uState.value = st; eyeU.uMix.value = 1;
     }
 
     const api = {
-      root, model: true, scale: SCALE, parts, character: ch,
+      root, model: true, scale: SCALE, parts, character: ch, setFace(n) { expr = ''; face(n); },
+      refreshFace() { const e = expr; expr = ''; face(e); },
       get mode() { return mode; },
       setClub(k) {
         kind = k;
@@ -159,7 +210,7 @@
         this.blinkStep(dt, 'normal');
       },
       // 立ちポーズ（キャラ紹介用）：設定画と同じ姿勢（骨の初期姿勢）で、クラブなし。息づかいだけ動く
-      stand(dt) {
+      stand(dt, mood) {
         if (mode !== 'stand') {
           mode = 'stand'; t = 0;
           Object.values(acts).forEach(a => a.setEffectiveWeight(0));
@@ -170,7 +221,7 @@
         t += dt;
         const k = Math.sin(t * 2.2);
         model.scale.set(SCALE * (1 - 0.003 * k), SCALE * (1 + 0.005 * k), SCALE * (1 - 0.003 * k));
-        this.blinkStep(dt, 'normal');
+        this.blinkStep(dt, mood || 'normal');
       },
       blinkStep(dt, base) {
         nextBlink -= dt;
@@ -198,7 +249,8 @@
       },
       get done() { return (mode === 'cheer' || mode === 'sad') && el > (mode === 'cheer' ? 3.2 : 4); },
     };
-    show(FACE_ALL, false);
+    // 以前の「部品を重ねる」表情は使わない（モデルに残っている部品は非表示のまま）
+    Object.values(parts).forEach((o) => { if (/^(Eye(Cover|Happy|Closed)|Mouth(Cover|Open|Sad)|Tongue)/.test(o.name)) o.visible = false; });
     api.setClub('Iron');
     api.pose(0, 0);
     onReady(api);

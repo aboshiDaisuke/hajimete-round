@@ -31,6 +31,7 @@
 
 ```
 python3 tools/sheet_model.py female                        # 設定画 → 体の形・テクスチャ（tools/build/）
+python3 tools/face_states.py female                        # 表情（まばたき・喜び・落ち込み）の絵 → assets/golfer-female-face.js
 CHARACTER=female blender -b -P tools/blender_golfer.py     # 骨・アニメーション → assets/golfer-female.glb と -glb.js
 ```
 
@@ -75,6 +76,7 @@ assets/golfer-glb.js  Blender で作ったゴルファー（体・服・クラ�
 assets/ball-glb.js    Blender で作ったディンプル付きボール（GLB を埋め込み）
 assets/*.png, *.jpg   Blender でレンダリングしたアイコンとヒーロー画像
 tools/blender_assets.py  ボール・アイコン・ヒーロー画像を作る Blender スクリプト
+tools/face_states.py    表情の絵（目・口）を作る
 tools/blender_golfer.py  ゴルファーを作る Blender スクリプト（-- check でポーズ確認画像も）
 tools/build_artifact.py  1枚のHTMLにまとめる（公開用 → dist/artifact.html）
 ```

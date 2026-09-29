@@ -75,12 +75,17 @@
         scene.add(g.root);
         host.classList.add('is-3d');
         let yaw = YAW0, last = performance.now(), idleFor = 0, drag = null;
-        if (!reduced()) g.react('cheer');
+        let joy = reduced() ? 0 : 1.5;                         // 喜びの残り時間（秒）：笑顔でその場で跳ねる（腕は動かさない）
         const frame = (now) => {
           S.raf = 0;
           if (token !== S.token) return;
           const dt = Math.min(0.05, (now - last) / 1000); last = now;
-          if (g.mode === 'cheer' || g.mode === 'sad') { g.tick(dt); if (g.done) g.stand(0); } else g.stand(dt);
+          if (joy > 0) {
+            joy = Math.max(0, joy - dt);
+            const k = 1 - joy / 1.5;                          // 0→1
+            g.stand(dt, 'happy');
+            g.root.position.y = 0.11 * Math.abs(Math.sin(k * Math.PI * 3)) * (1 - k);
+          } else { g.stand(dt); g.root.position.y = 0; }
           // ドラッグしていないときは、少しずつ正面寄りに戻る
           if (!drag) { idleFor += dt; if (idleFor > 2) yaw += (YAW0 - yaw) * Math.min(1, dt * 2.5); }
           g.root.rotation.y = yaw;
@@ -102,7 +107,7 @@
           if (reduced()) renderer.render(scene, camera);
         };
         const up = () => {
-          if (drag && !drag.moved && g.mode !== 'cheer') g.react('cheer');
+          if (drag && !drag.moved && joy <= 0.2) joy = 1.5;
           drag = null; idleFor = 0; kick();
         };
         host.addEventListener('pointerdown', down);

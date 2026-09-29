@@ -9,25 +9,12 @@
   const prefersReduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const isSmall = () => window.matchMedia('(max-width: 700px), (pointer: coarse)').matches;
 
-  /* ---------- ホールのレイアウト（単位: m） ---------- */
-  const TEE_Z = 124, GREEN_Z = -122;
+  /* ---------- ホールのレイアウト（単位: m）：コースごとに applyLayout() で差し替える ---------- */
   const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-  function cx(z) {
-    const t = (TEE_Z - z) / (TEE_Z - GREEN_Z);
-    return 22 * Math.sin(t * Math.PI * 0.85) - 4 * t;
-  }
-  const GX = cx(GREEN_Z);
-  const CUP = { x: GX + 3, z: GREEN_Z - 2 };
-  const FW = { z0: 88, z1: -104 };
-
-  const green = { x: GX, z: GREEN_Z, rx: 17, ry: 14, rot: 0.35, w: 0.05, p: 1 };
-  const bunkers = [
-    { x: GX - 19, z: GREEN_Z + 6, rx: 7, ry: 4.2, rot: 1.1, w: 0.12, p: 2 },
-    { x: GX + 15, z: GREEN_Z + 14, rx: 6.5, ry: 3.6, rot: -0.7, w: 0.12, p: 4 },
-    { x: cx(8) - 20, z: 8, rx: 10, ry: 4.5, rot: 0.15, w: 0.14, p: 0.5 },
-    { x: cx(-40) + 20, z: -40, rx: 7.5, ry: 4, rot: -0.25, w: 0.14, p: 3 },
-  ];
-  const pond = { x: cx(30) + 41, z: 30, rx: 16, ry: 30, rot: 0.2, w: 0.1, p: 1.3 };
+  let TEE_Z = 124, GREEN_Z = -122, GX = 0, CUP = { x: 0, z: 0 };
+  let FW = { z0: 88, z1: -104 };
+  let cx = () => 0;
+  let green, bunkers, pond, TEES, HOLES, C, RELIEF = 1, DUNE = 0, TREES;
 
   function blobSd(b, x, z) {
     const dx = x - b.x, dz = z - b.z;
@@ -45,11 +32,7 @@
     const f = Math.pow(1 - Math.pow(u, 6), 1 / 6);
     return (fairwayWidth(z) / 2) * f - Math.abs(x - cx(z)) - (u >= 1 ? 30 : 0);
   }
-  // ティー：バックティー（パー4）と、池の横のショートホール用ティー（パー3）
-  const TEES = [
-    { x: 0, z: TEE_Z, hw: 7, hd: 5, h: 1.4, marker: 0x2f6fd6 },
-    { x: 70, z: -25, hw: 5, hd: 4, h: null, marker: 0xd8322b },
-  ];
+  // ティーは2つ：バックティー（1・3ホール目）と、ショートホール用ティー（2ホール目）
   const teeBoxSd = (t, x, z) => Math.min(t.hw - Math.abs(x - t.x), t.hd - Math.abs(z - t.z));
   const teeSd = (x, z) => Math.max(teeBoxSd(TEES[0], x, z), teeBoxSd(TEES[1], x, z));
   const pathX = (z) => cx(z) - 44 + 6 * Math.sin(z * 0.03);
@@ -59,6 +42,8 @@
     const d = x - cx(z), ad = Math.abs(d);
     let h = 0.9 * Math.sin(x * 0.035 + 0.7) * Math.cos(z * 0.028) + 0.6 * Math.sin(z * 0.05 + x * 0.013);
     h += smooth(38, 95, ad) * (4 + 2 * Math.sin(z * 0.031 + (d > 0 ? 2 : 0)));
+    h *= RELIEF;
+    if (DUNE) h += DUNE * (Math.sin(x * 0.09 + z * 0.05) * Math.cos(z * 0.08 - x * 0.03) + 0.4) * smooth(14, 44, ad);
     h += smooth(150, 320, ad) * 30;
     h += smooth(150, 330, -z) * 26 + smooth(170, 330, z) * 18;
     const fm = smooth(-6, 8, fairwaySd(x, z));
@@ -110,13 +95,6 @@
 
   /* ---------- 芝のテクスチャ（Canvas に 1 ピクセルずつ塗る） ---------- */
   const TEX = { x0: -170, z0: -200, size: 380 };
-  const C = {
-    rough: [52, 104, 48], cut: [70, 124, 58],
-    fwA: [112, 170, 78], fwB: [95, 153, 66],
-    grA: [124, 188, 90], grB: [108, 172, 76], collar: [88, 148, 62],
-    sand: [232, 218, 180], path: [186, 178, 158], teeA: [112, 170, 78], teeB: [98, 156, 68],
-    bed: [58, 86, 66],
-  };
   function paintTexture(THREE, N) {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = N;
@@ -254,7 +232,7 @@
   }
 
   function buildTrees(THREE) {
-    const rand = rng(20260928);
+    const rand = rng(TREES.seed);
     const list = [];
     const ok = (x, z) => {
       if (blobSd(pond, x, z) > -7) return false;
@@ -269,19 +247,19 @@
       return true;
     };
     let tries = 0;
-    const target = isSmall() ? 230 : 330;
+    const target = Math.round(TREES.n * (isSmall() ? 0.7 : 1));
     while (list.length < target && tries < 6000) {
       tries++;
       let x, z;
-      if (rand() < 0.15) { z = -150 - rand() * 90; x = GX + (rand() * 2 - 1) * 110; }
+      if (rand() < 0.15 * TREES.back) { z = -150 - rand() * 90; x = GX + (rand() * 2 - 1) * 110; }
       else {
         z = -160 + rand() * 360;
         const side = rand() < 0.5 ? -1 : 1;
-        const d = 38 + Math.pow(rand(), 1.6) * 110;
+        const d = TREES.near + Math.pow(rand(), 1.6) * 110;
         x = cx(z) + side * d;
       }
       if (!ok(x, z)) continue;
-      list.push({ x, z, s: 0.85 + rand() * 0.8, type: rand() < 0.3 ? 'cone' : 'round', r: rand(), r2: rand() });
+      list.push({ x, z, s: 0.85 + rand() * 0.8, type: rand() < TREES.cone ? 'cone' : 'round', r: rand(), r2: rand() });
     }
     const group = new THREE.Group();
     const trunkGeo = new THREE.CylinderGeometry(0.25, 0.4, 1, 6);
@@ -298,7 +276,7 @@
     const coneMesh = new THREE.InstancedMesh(coneGeo, leafMat, cones.length);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0);
-    const palette = [0x2b5a2b, 0x356a31, 0x234d27, 0x41743a, 0x2f6134, 0x4f7d34];
+    const palette = TREES.cols;
     const col = new THREE.Color();
     let ti = 0, ci = 0, ki = 0;
     for (const t of list) {
@@ -469,13 +447,16 @@
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     const group = new THREE.Group();
+    const mats = [];
     const rand = rng(99);
     for (let i = 0; i < 14; i++) {
       const cluster = new THREE.Group();
       const a = rand() * Math.PI * 2, R = 700 + rand() * 500;
       cluster.position.set(Math.cos(a) * R, 170 + rand() * 120, Math.sin(a) * R);
       for (let k = 0; k < 5; k++) {
-        const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, fog: false, depthWrite: false, opacity: 0.8, toneMapped: false }));
+        const mat = new THREE.SpriteMaterial({ map: tex, fog: false, depthWrite: false, opacity: 0.8, toneMapped: false });
+        mats.push(mat);
+        const s = new THREE.Sprite(mat);
         s.position.set((rand() - 0.5) * 160, (rand() - 0.5) * 20, (rand() - 0.5) * 60);
         const w = 90 + rand() * 90;
         s.scale.set(w, w * 0.45, 1);
@@ -483,7 +464,7 @@
       }
       group.add(cluster);
     }
-    return group;
+    return { group, mats };
   }
 
   /* ---------- 解説ポイント ---------- */
@@ -534,8 +515,256 @@
   const state = {
     built: false, failed: false, renderer: null, scene: null, camera: null, controls: null,
     container: null, layer: null, mode: 'hero', running: false, hotspots: [], buttons: {},
-    flag: null, fly: null, onSelect: null, t0: performance.now(), observer: null, visible: true, onReady: [],
+    flag: null, fly: null, onSelect: null, courseId: 'hills', weatherId: 'sunny', lastT: 0, t0: performance.now(), observer: null, visible: true, onReady: [],
   };
+
+  /* ---------- コースごとのレイアウトと見た目 ---------- */
+  const TREES_GREEN = [0x2b5a2b, 0x356a31, 0x234d27, 0x41743a, 0x2f6134, 0x4f7d34];
+  const LAYOUTS = {
+    hills: {
+      name: 'グリーンヒルズ', desc: 'ゆるやかな丘とドッグレッグ。ゴルフの基本が全部そろった、はじめの一歩のコース', lv: 1,
+      pal: {
+        rough: [52, 104, 48], cut: [70, 124, 58], fwA: [112, 170, 78], fwB: [95, 153, 66],
+        grA: [124, 188, 90], grB: [108, 172, 76], collar: [88, 148, 62], sand: [232, 218, 180], path: [186, 178, 158],
+        teeA: [112, 170, 78], teeB: [98, 156, 68], bed: [58, 86, 66],
+      },
+      relief: 1, dune: 0, trees: { n: 330, cone: 0.3, cols: TREES_GREEN, seed: 20260928, near: 38, back: 1 },
+      make() {
+        TEE_Z = 124; GREEN_Z = -122;
+        cx = (z) => { const t = (TEE_Z - z) / (TEE_Z - GREEN_Z); return 22 * Math.sin(t * Math.PI * 0.85) - 4 * t; };
+        GX = cx(GREEN_Z); CUP = { x: GX + 3, z: GREEN_Z - 2 }; FW = { z0: 88, z1: -104 };
+        green = { x: GX, z: GREEN_Z, rx: 17, ry: 14, rot: 0.35, w: 0.05, p: 1 };
+        bunkers = [
+          { x: GX - 19, z: GREEN_Z + 6, rx: 7, ry: 4.2, rot: 1.1, w: 0.12, p: 2 },
+          { x: GX + 15, z: GREEN_Z + 14, rx: 6.5, ry: 3.6, rot: -0.7, w: 0.12, p: 4 },
+          { x: cx(8) - 20, z: 8, rx: 10, ry: 4.5, rot: 0.15, w: 0.14, p: 0.5 },
+          { x: cx(-40) + 20, z: -40, rx: 7.5, ry: 4, rot: -0.25, w: 0.14, p: 3 },
+        ];
+        pond = { x: cx(30) + 41, z: 30, rx: 16, ry: 30, rot: 0.2, w: 0.1, p: 1.3 };
+        TEES = [
+          { x: 0, z: TEE_Z, hw: 7, hd: 5, h: 1.4, marker: 0x2f6fd6 },
+          { x: 70, z: -25, hw: 5, hd: 4, h: null, marker: 0xd8322b },
+        ];
+        HOLES = [
+          { n: 1, par: 4, tee: { x: 0.6, z: TEE_Z - 4 }, pin: { x: GX + 3, z: GREEN_Z - 2 }, wind: [0, 4] },
+          { n: 2, par: 3, tee: { x: TEES[1].x, z: TEES[1].z }, pin: { x: GX - 5, z: GREEN_Z + 5 }, wind: [1, 4] },
+          { n: 3, par: 4, tee: { x: -1.6, z: TEE_Z - 1.5 }, pin: { x: GX + 7, z: GREEN_Z - 6 }, wind: [2, 6] },
+        ];
+      },
+    },
+    lake: {
+      name: 'レイクサイド', desc: '左サイドに大きな池が広がる秋のコース。曲げないショットが大切', lv: 3,
+      pal: {
+        rough: [104, 108, 52], cut: [92, 126, 60], fwA: [126, 170, 80], fwB: [108, 152, 68],
+        grA: [130, 190, 92], grB: [112, 174, 78], collar: [96, 148, 62], sand: [236, 222, 184], path: [196, 182, 150],
+        teeA: [126, 170, 80], teeB: [108, 154, 68], bed: [62, 84, 70],
+      },
+      relief: 0.8, dune: 0, trees: { n: 300, cone: 0.15, cols: [0xd9822b, 0xc2452d, 0xe0a030, 0x9c5a2a, 0x7a8a2a, 0xb8641f], seed: 771, near: 36, back: 1 },
+      make() {
+        TEE_Z = 124; GREEN_Z = -118;
+        cx = (z) => { const t = (TEE_Z - z) / (TEE_Z - GREEN_Z); return 14 * Math.sin(t * Math.PI * 1.15) - 2 * t; };
+        GX = cx(GREEN_Z); CUP = { x: GX + 3, z: GREEN_Z - 2 }; FW = { z0: 90, z1: -100 };
+        green = { x: GX, z: GREEN_Z, rx: 16, ry: 13, rot: -0.35, w: 0.05, p: 2 };
+        bunkers = [
+          { x: GX + 19, z: GREEN_Z + 5, rx: 6.5, ry: 3.8, rot: 0.9, w: 0.12, p: 1 },
+          { x: GX - 4, z: GREEN_Z + 21, rx: 6, ry: 3.4, rot: 0.2, w: 0.12, p: 3 },
+          { x: cx(34) + 22, z: 34, rx: 9, ry: 4.2, rot: -0.2, w: 0.14, p: 2 },
+          { x: cx(-34) + 21, z: -34, rx: 7.5, ry: 4, rot: 0.3, w: 0.14, p: 5 },
+        ];
+        pond = { x: cx(-12) - 39, z: -12, rx: 17, ry: 62, rot: 0.06, w: 0.09, p: 0.7 };
+        TEES = [
+          { x: 0, z: TEE_Z, hw: 7, hd: 5, h: 1.4, marker: 0x2f6fd6 },
+          { x: cx(44) + 26, z: 44, hw: 5, hd: 4, h: null, marker: 0xd8322b },
+        ];
+        HOLES = [
+          { n: 1, par: 4, tee: { x: 0.6, z: TEE_Z - 4 }, pin: { x: GX + 4, z: GREEN_Z - 2 }, wind: [0, 4] },
+          { n: 2, par: 3, tee: { x: TEES[1].x, z: TEES[1].z }, pin: { x: GX - 8, z: GREEN_Z + 3 }, wind: [1, 5] },
+          { n: 3, par: 4, tee: { x: -1.6, z: TEE_Z - 1.5 }, pin: { x: GX - 6, z: GREEN_Z - 6 }, wind: [2, 6] },
+        ];
+      },
+    },
+    links: {
+      name: 'シーサイドリンクス', desc: '木のない砂丘のコース。風が強く、小川を越える正確さが試される', lv: 5,
+      pal: {
+        rough: [136, 138, 76], cut: [122, 144, 74], fwA: [142, 178, 88], fwB: [124, 162, 76],
+        grA: [128, 192, 98], grB: [112, 176, 84], collar: [104, 156, 70], sand: [238, 226, 188], path: [200, 190, 164],
+        teeA: [142, 178, 88], teeB: [124, 162, 76], bed: [70, 88, 66],
+      },
+      relief: 0.4, dune: 2.8, trees: { n: 22, cone: 0, cols: [0x5f7a3a, 0x6b8442, 0x55703a], seed: 4242, near: 60, back: 0 },
+      make() {
+        TEE_Z = 124; GREEN_Z = -122;
+        cx = (z) => { const t = (TEE_Z - z) / (TEE_Z - GREEN_Z); return 16 * Math.sin(t * Math.PI * 0.6) + 7 * Math.sin(t * Math.PI * 2.3); };
+        GX = cx(GREEN_Z); CUP = { x: GX - 2, z: GREEN_Z + 1 }; FW = { z0: 92, z1: -104 };
+        green = { x: GX, z: GREEN_Z, rx: 13, ry: 15, rot: 1.2, w: 0.07, p: 3 };
+        bunkers = [
+          { x: GX + 15, z: GREEN_Z + 6, rx: 5, ry: 3.2, rot: 0.4, w: 0.16, p: 1 },
+          { x: GX - 15, z: GREEN_Z - 4, rx: 4.5, ry: 3, rot: -0.6, w: 0.16, p: 2 },
+          { x: GX + 2, z: GREEN_Z + 19, rx: 5, ry: 3, rot: 0.1, w: 0.16, p: 4 },
+          { x: cx(60) + 17, z: 60, rx: 5, ry: 3.4, rot: 0.3, w: 0.16, p: 1 },
+          { x: cx(52) - 17, z: 52, rx: 4.5, ry: 3, rot: -0.2, w: 0.16, p: 3 },
+          { x: cx(-6) + 16, z: -6, rx: 5.5, ry: 3.4, rot: 0.5, w: 0.16, p: 2 },
+          { x: cx(-62) - 16, z: -62, rx: 5, ry: 3.2, rot: -0.4, w: 0.16, p: 5 },
+        ];
+        pond = { x: cx(-30) + 3, z: -30, rx: 50, ry: 5.5, rot: 0.05, w: 0.05, p: 0.3 };
+        TEES = [
+          { x: 0, z: TEE_Z, hw: 7, hd: 5, h: 1.4, marker: 0x2f6fd6 },
+          { x: cx(10) - 14, z: 10, hw: 5, hd: 4, h: null, marker: 0xd8322b },
+        ];
+        HOLES = [
+          { n: 1, par: 4, tee: { x: 0.6, z: TEE_Z - 4 }, pin: { x: GX - 2, z: GREEN_Z + 1 }, wind: [3, 7] },
+          { n: 2, par: 3, tee: { x: TEES[1].x, z: TEES[1].z }, pin: { x: GX + 4, z: GREEN_Z + 3 }, wind: [3, 8] },
+          { n: 3, par: 4, tee: { x: -1.6, z: TEE_Z - 1.5 }, pin: { x: GX + 3, z: GREEN_Z - 5 }, wind: [4, 9] },
+        ];
+      },
+    },
+  };
+  function applyLayout(id) {
+    const L = LAYOUTS[id];
+    L.make();
+    C = L.pal; RELIEF = L.relief; DUNE = L.dune; TREES = L.trees;
+    HOLES.forEach((h) => { h.course = id; });
+  }
+  applyLayout('hills');
+
+  /* ---------- 天候（空・光・霧・雨。風の強さと転がりにも影響する） ---------- */
+  const WEATHERS = {
+    sunny: { name: '晴れ', elev: 28, az: 35, sun: 0xfff0d6, sunI: 2.7, glow: 1, top: 0x2f7fc6, mid: 0x7fbde6, hor: 0xdaecf1, fog: [0xd3e7ee, 280, 1300],
+      hemi: [0xcfe6ff, 0x3d5c35, 0.55], env: 0.5, cloud: 0.8, exp: 1.0, wind: 1, roll: 1, rain: 0 },
+    sunset: { name: '夕焼け', elev: 7, az: 82, sun: 0xffa860, sunI: 2.5, glow: 1, top: 0x3a4a92, mid: 0xdc8a72, hor: 0xf8c88c, fog: [0xefb48c, 200, 1200],
+      hemi: [0xffc9a0, 0x554a55, 0.85], env: 0.6, cloud: 0.9, cc: 1, exp: 1.08, wind: 0.8, roll: 1, rain: 0 },
+    cloudy: { name: 'くもり', elev: 40, az: 35, sun: 0xffffff, sunI: 0.9, glow: 0, top: 0x8c9aa5, mid: 0xa9b6be, hor: 0xd0d8db, fog: [0xc4cdd1, 150, 1000],
+      hemi: [0xdfe6ea, 0x50604a, 1.15], env: 0.6, cloud: 0.6, cc: 0.85, exp: 1.0, wind: 1.2, roll: 1, rain: 0 },
+    rain: { name: '雨', elev: 40, az: 35, sun: 0xdde6ee, sunI: 0.4, glow: 0, top: 0x55616b, mid: 0x76838c, hor: 0xa0aab0, fog: [0x98a3a9, 60, 520],
+      hemi: [0xc8d4dc, 0x40503f, 1.0], env: 0.5, cloud: 0.5, cc: 0.65, exp: 0.95, wind: 1.6, roll: 0.7, rain: 1 },
+  };
+
+  function buildRain(THREE) {
+    const N = 1600, BOX = 60, H = 34;
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(N * 6), drop = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) { drop[i * 3] = (Math.random() - 0.5) * BOX; drop[i * 3 + 1] = Math.random() * H; drop[i * 3 + 2] = (Math.random() - 0.5) * BOX; }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const line = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0xd6e4ee, transparent: true, opacity: 0.5, depthWrite: false }));
+    line.frustumCulled = false;
+    const write = () => {
+      for (let i = 0; i < N; i++) {
+        const x = drop[i * 3], y = drop[i * 3 + 1], z = drop[i * 3 + 2];
+        pos.set([x, y, z, x + 0.12, y - 0.9, z + 0.05], i * 6);
+      }
+      geo.attributes.position.needsUpdate = true;
+    };
+    write();
+    return {
+      line,
+      update(dt, cam) {
+        line.position.set(cam.x, cam.y - 12, cam.z);
+        if (prefersReduced()) return;
+        for (let i = 0; i < N; i++) { drop[i * 3 + 1] -= 24 * dt; if (drop[i * 3 + 1] < 0) drop[i * 3 + 1] += H; }
+        write();
+      },
+    };
+  }
+
+  function bakeEnv() {
+    const S = state;
+    S.envScene.add(S.sky);
+    const rt = S.pmrem.fromScene(S.envScene);
+    S.envScene.remove(S.sky);
+    S.scene.add(S.sky);
+    if (S.envRT) S.envRT.dispose();
+    S.envRT = rt;
+    S.scene.environment = rt.texture;
+  }
+
+  function setWeather(id) {
+    if (!WEATHERS[id]) id = 'sunny';
+    state.weatherId = id;
+    if (!state.built) return;
+    const W = WEATHERS[id], T = state.THREE;
+    const dir = new T.Vector3().setFromSphericalCoords(1, T.MathUtils.degToRad(90 - W.elev), T.MathUtils.degToRad(W.az));
+    const u = state.sky.material.uniforms;
+    u.top.value.setHex(W.top); u.mid.value.setHex(W.mid); u.horizon.value.setHex(W.hor);
+    u.sunDir.value.copy(dir); u.glow.value = W.glow;
+    state.sun.color.setHex(W.sun); state.sun.intensity = W.sunI;
+    state.sun.position.copy(state.sun.target.position).addScaledVector(dir, 420);
+    state.hemi.color.setHex(W.hemi[0]); state.hemi.groundColor.setHex(W.hemi[1]); state.hemi.intensity = W.hemi[2];
+    state.scene.fog.color.setHex(W.fog[0]); state.scene.fog.near = W.fog[1]; state.scene.fog.far = W.fog[2];
+    state.scene.environmentIntensity = W.env;
+    state.renderer.toneMappingExposure = W.exp;
+    state.cloudMats.forEach((m) => { m.opacity = 0.8 * W.cloud; m.color.setScalar(W.cc == null ? 1 : W.cc); });
+    state.rain.line.visible = !!W.rain;
+    bakeEnv();
+  }
+
+  function disposeGroup(g) {
+    g.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      const m = o.material;
+      if (m) (Array.isArray(m) ? m : [m]).forEach((x) => { if (x.map) x.map.dispose(); x.dispose(); });
+    });
+    if (g.parent) g.parent.remove(g);
+  }
+
+  // いまのレイアウトで、地形・池・木・杭・旗・ティーを作る
+  function buildCourse() {
+    const THREE = state.THREE, renderer = state.renderer;
+    const group = new THREE.Group();
+    const tex = paintTexture(THREE, isSmall() ? 1280 : 2048);
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    group.add(buildTerrain(THREE, tex), buildWater(THREE), buildTrees(THREE));
+    const stakes = buildStakes(THREE);
+    group.add(stakes.group);
+    const flag = buildFlag(THREE);
+    group.add(flag.group);
+    const tee = buildTeeObjects(THREE);
+    group.add(tee.group);
+    const ball = makeBall(THREE, 0.0214 * 2.4);
+    ball.position.copy(tee.ballPos);
+    group.add(ball);
+
+    // ヒーロー用のカメラ経路（閉じたループ）
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const ty = tee.y, bp = tee.ballPos;
+    const gy = height(GX, GREEN_Z);
+    const camPts = [
+      V(bp.x - 0.22, bp.y + 0.1, bp.z + 0.62), V(-2.5, ty + 4, TEE_Z - 8), V(cx(60) - 16, 17, 60),
+      V(cx(-20) - 24, 21, -20), V(GX - 30, gy + 9, -92), V(GX - 13, gy + 4.5, -106), V(GX + 14, gy + 5, -108),
+      V(GX + 44, 32, -96), V(85, 72, -20), V(42, 46, 118), V(4, ty + 7, TEE_Z + 12),
+    ];
+    const lookPts = [
+      V(bp.x + 0.5, bp.y, bp.z - 3), V(cx(60), 0, 60), V(cx(0), 0, 0),
+      V(cx(-80), 0, -80), V(GX, gy + 1, GREEN_Z), V(CUP.x, gy + 2.2, CUP.z), V(CUP.x, gy + 2, CUP.z),
+      V(GX, gy, GREEN_Z), V(cx(0), 0, -30), V(0, 0, 60), V(bp.x, bp.y + 0.4, bp.z - 6),
+    ];
+    return {
+      group, flag, teeBall: ball,
+      camCurve: new THREE.CatmullRomCurve3(camPts, true, 'centripetal'),
+      lookCurve: new THREE.CatmullRomCurve3(lookPts, true, 'centripetal'),
+      hotspots: hotspotDefs(THREE, { marker150: stakes.marker150, flagTop: flag.top }),
+    };
+  }
+
+  function setCourse(id) {
+    if (!LAYOUTS[id]) id = 'hills';
+    if (state.courseId === id) return;
+    applyLayout(id);
+    state.courseId = id;
+    if (!state.built) return;
+    if (state.course) disposeGroup(state.course);
+    const c = buildCourse();
+    state.scene.add(c.group);
+    Object.assign(state, { course: c.group, flag: c.flag, teeBall: c.teeBall, camCurve: c.camCurve, lookCurve: c.lookCurve, hotspots: c.hotspots });
+  }
+
+  // 別コースのホール定義だけ知りたいとき（地形は作り直さない）
+  function holesOf(id) {
+    const cur = state.courseId;
+    if (id === cur) return HOLES;
+    applyLayout(id);
+    const list = HOLES;
+    applyLayout(cur);
+    return list;
+  }
 
   function build() {
     if (state.built || state.failed) return;
@@ -555,44 +784,32 @@
 
     const scene = new THREE.Scene();
     scene.fog = new THREE.Fog(0xd3e7ee, 280, 1300);
-
     const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 6000);
 
-    // 空（グラデーション + 太陽のにじみ）
-    const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 28), THREE.MathUtils.degToRad(35));
+    // 空（グラデーション + 太陽のにじみ）。色や太陽の向きは setWeather() で変える
     const sky = new THREE.Mesh(new THREE.SphereGeometry(4000, 32, 16), new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false, toneMapped: false,
       uniforms: {
         top: { value: new THREE.Color(0x2f7fc6) }, mid: { value: new THREE.Color(0x7fbde6) },
-        horizon: { value: new THREE.Color(0xdaecf1) }, sunDir: { value: sunDir },
+        horizon: { value: new THREE.Color(0xdaecf1) }, sunDir: { value: new THREE.Vector3(0, 1, 0) }, glow: { value: 1 },
       },
       vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-      fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 horizon; uniform vec3 sunDir; varying vec3 vDir;
+      fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 horizon; uniform vec3 sunDir; uniform float glow; varying vec3 vDir;
         void main(){
           vec3 d = normalize(vDir);
           float h = max(d.y, 0.0);
           vec3 c = mix(horizon, mid, smoothstep(0.0, 0.22, h));
           c = mix(c, top, smoothstep(0.22, 0.9, h));
           float s = max(dot(d, normalize(sunDir)), 0.0);
-          c += vec3(1.0, 0.94, 0.8) * (pow(s, 400.0) * 1.2 + pow(s, 12.0) * 0.12);
+          c += vec3(1.0, 0.94, 0.8) * (pow(s, 400.0) * 1.2 + pow(s, 12.0) * 0.12) * glow;
           gl_FragColor = vec4(c, 1.0);
           #include <colorspace_fragment>
         }`,
     }));
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const envScene = new THREE.Scene();
-    envScene.add(sky);
-    scene.environment = pmrem.fromScene(envScene).texture;
-    scene.environmentIntensity = 0.5;
-    envScene.remove(sky);
-    scene.add(sky);
-
     const hemi = new THREE.HemisphereLight(0xcfe6ff, 0x3d5c35, 0.55);
     scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff0d6, 2.7);
-    const target = new THREE.Vector3(20, 0, -8);
-    sun.position.copy(target).addScaledVector(sunDir, 420);
-    sun.target.position.copy(target);
+    sun.target.position.set(20, 0, -8);
     sun.castShadow = true;
     const sm = isSmall() ? 2048 : 4096;
     sun.shadow.mapSize.set(sm, sm);
@@ -601,38 +818,18 @@
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.6;
     scene.add(sun, sun.target);
 
-    const tex = paintTexture(THREE, isSmall() ? 1280 : 2048);
-    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    scene.add(buildTerrain(THREE, tex));
-    scene.add(buildWater(THREE));
-    scene.add(buildTrees(THREE));
-    const stakes = buildStakes(THREE);
-    scene.add(stakes.group);
-    const flag = buildFlag(THREE);
-    scene.add(flag.group);
-    const tee = buildTeeObjects(THREE);
-    scene.add(tee.group);
-    const ball = makeBall(THREE, 0.0214 * 2.4);
-    ball.position.copy(tee.ballPos);
-    scene.add(ball);
-    scene.add(buildClouds(THREE));
+    const clouds = buildClouds(THREE);
+    scene.add(clouds.group);
+    const rain = buildRain(THREE);
+    scene.add(rain.line);
+    Object.assign(state, {
+      renderer, scene, camera, sky, sun, hemi, THREE, rain, cloudMats: clouds.mats,
+      pmrem: new THREE.PMREMGenerator(renderer), envScene: new THREE.Scene(), envRT: null,
+    });
 
-    // ヒーロー用のカメラ経路（閉じたループ）
-    const V = (x, y, z) => new THREE.Vector3(x, y, z);
-    const ty = tee.y, bp = tee.ballPos;
-    const gy = height(GX, GREEN_Z);
-    const camPts = [
-      V(bp.x - 0.22, bp.y + 0.1, bp.z + 0.62), V(-2.5, ty + 4, TEE_Z - 8), V(cx(60) - 16, 17, 60),
-      V(cx(-20) - 24, 21, -20), V(GX - 30, gy + 9, -92), V(GX - 13, gy + 4.5, -106), V(GX + 14, gy + 5, -108),
-      V(GX + 44, 32, -96), V(85, 72, -20), V(42, 46, 118), V(4, ty + 7, TEE_Z + 12),
-    ];
-    const lookPts = [
-      V(bp.x + 0.5, bp.y, bp.z - 3), V(cx(60), 0, 60), V(cx(0), 0, 0),
-      V(cx(-80), 0, -80), V(GX, gy + 1, GREEN_Z), V(CUP.x, gy + 2.2, CUP.z), V(CUP.x, gy + 2, CUP.z),
-      V(GX, gy, GREEN_Z), V(cx(0), 0, -30), V(0, 0, 60), V(bp.x, bp.y + 0.4, bp.z - 6),
-    ];
-    const camCurve = new THREE.CatmullRomCurve3(camPts, true, 'centripetal');
-    const lookCurve = new THREE.CatmullRomCurve3(lookPts, true, 'centripetal');
+    const c = buildCourse();
+    scene.add(c.group);
+    Object.assign(state, { course: c.group, flag: c.flag, teeBall: c.teeBall, camCurve: c.camCurve, lookCurve: c.lookCurve, hotspots: c.hotspots });
 
     let controls = null;
     if (A.OrbitControls) {
@@ -645,14 +842,10 @@
       controls.target.set(18, 0, -10);
       controls.enabled = false;
       controls.addEventListener('start', () => { state.fly = null; });
+      renderer.domElement.style.touchAction = 'pan-y';
     }
-
-    Object.assign(state, {
-      built: true, renderer, scene, camera, controls, flag, camCurve, lookCurve, teeBall: ball,
-      hotspots: hotspotDefs(THREE, { marker150: stakes.marker150, flagTop: flag.top }),
-      tmpLook: new THREE.Vector3(), THREE,
-    });
-    if (controls) renderer.domElement.style.touchAction = 'pan-y';
+    Object.assign(state, { built: true, controls, tmpLook: new THREE.Vector3() });
+    setWeather(state.weatherId || 'sunny');
     state.onReady.splice(0).forEach(fn => fn());
   }
 
@@ -726,6 +919,8 @@
   function loop(time) {
     if (!state.built) return;
     const reduced = prefersReduced();
+    const dt = Math.min(0.1, Math.max(0, (time - (state.lastT || time)) / 1000));
+    state.lastT = time;
     if (state.flag && !reduced) state.flag.wave(time / 1000);
     if (state.mode === 'hero') heroFrame(time);
     else if (state.mode === 'play') { if (state.onFrame) state.onFrame(time); }
@@ -740,6 +935,7 @@
       }
       state.controls.update();
     }
+    if (state.rain.line.visible) state.rain.update(dt, state.camera.position);
     state.renderer.render(state.scene, state.camera);
     if (state.mode === 'explore') updateHotspots();
   }
@@ -786,6 +982,10 @@
   function mount(container, opts) {
     opts = opts || {};
     const go = () => {
+      // ゲーム以外（図鑑など）は、いつも晴れのグリーンヒルズ
+      const playing = opts.mode === 'play';
+      setCourse(playing ? (opts.course || 'hills') : 'hills');
+      setWeather(playing ? (opts.weather || 'sunny') : 'sunny');
       build();
       if (state.failed) { container.classList.add('scene-failed'); return; }
       state.container = container;
@@ -846,19 +1046,18 @@
     if (pathSd(x, z) > 0) return 'path';
     return 'rough';
   }
-  const HOLES = [
-    { n: 1, par: 4, tee: { x: 0.6, z: TEE_Z - 4 }, pin: { x: GX + 3, z: GREEN_Z - 2 }, wind: [0, 4] },
-    { n: 2, par: 3, tee: { x: TEES[1].x, z: TEES[1].z }, pin: { x: GX - 5, z: GREEN_Z + 5 }, wind: [1, 4] },
-    { n: 3, par: 4, tee: { x: -1.6, z: TEE_Z - 1.5 }, pin: { x: GX + 7, z: GREEN_Z - 6 }, wind: [2, 6] },
-  ];
-
   window.GolfScene = {
     world() {
       if (!state.built) return null;
       return { THREE: state.THREE, scene: state.scene, camera: state.camera, renderer: state.renderer,
-        height: (x, z) => height(x, z), lie, center: cx, holes: HOLES, flag: state.flag, makeBall };
+        height: (x, z) => height(x, z), lie, center: (z) => cx(z), makeBall,
+        get holes() { return HOLES; }, get flag() { return state.flag; },
+        get course() { return state.courseId; }, get weather() { return WEATHERS[state.weatherId]; } };
     },
-    mount, unmount, select,
+    mount, unmount, select, setCourse, setWeather, holesOf,
+    get course() { return state.courseId; },
+    COURSES: Object.keys(LAYOUTS).map((id) => ({ id, name: LAYOUTS[id].name, desc: LAYOUTS[id].desc, lv: LAYOUTS[id].lv })),
+    WEATHERS: Object.keys(WEATHERS).map((id) => ({ id, name: WEATHERS[id].name })),
     resetView: () => setOverview(false),
     get hotspots() { return state.hotspots; },
     get failed() { return state.failed; },

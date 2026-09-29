@@ -227,8 +227,16 @@
   const dirOf = (yaw) => ({ x: Math.sin(yaw), z: Math.cos(yaw) });
 
   /* ---------- 状態 ---------- */
+  // 選んだコースのホール一覧（「全9ホール」は3コースを順に）
+  function courseHoles() {
+    const GS = window.GolfScene;
+    if (opts.course === 'all') return GS.COURSES.flatMap(c => GS.holesOf(c.id)).map((h, i) => Object.assign({}, h, { n: i + 1 }));
+    return W.holes;
+  }
   function newGame(mode) {
-    const holes = W.holes;
+    const first = opts.course === 'all' ? 'hills' : (opts.course || 'hills');
+    if (window.GolfScene.course !== first) window.GolfScene.setCourse(first);
+    const holes = courseHoles();
     G = {
       mode, phase: 'intro', t0: performance.now(), last: performance.now(),
       holes: mode === 'round' ? holes : mode === 'nearpin' ? [holes[1]] : [holes[0]],
@@ -238,6 +246,20 @@
       swing: { theta: 0, anim: null },
       shotsThisHole: 0,
     };
+    startHole();
+  }
+
+  // 次のホールが別のコースなら、コースを作り直してから始める
+  function enterHole() {
+    const h = G.holes[G.hi];
+    const GS = window.GolfScene;
+    if (h.course && GS.course !== h.course) {
+      const c = GS.COURSES.find(x => x.id === h.course);
+      G.phase = 'loading';
+      showOverlay(`<div class="g-ov-eyebrow">NEXT COURSE</div><div class="g-ov-term">${c.name}</div><p>つぎのコースへ移動中…</p>`);
+      setTimeout(() => { if (!G) return; GS.setCourse(h.course); hideOverlay(); startHole(); }, 80);
+      return;
+    }
     startHole();
   }
 
@@ -251,7 +273,7 @@
     G.prev = { x: h.tee.x, z: h.tee.z };
     G.lie = 'tee';
     G.chip = false;
-    const sp = h.wind[0] + Math.random() * (h.wind[1] - h.wind[0]);
+    const sp = (h.wind[0] + Math.random() * (h.wind[1] - h.wind[0])) * W.weather.wind;
     const ang = Math.random() * Math.PI * 2;
     G.wind = { x: Math.sin(ang) * sp, z: Math.cos(ang) * sp, sp };
     W.flag.setPin(G.pin.x, G.pin.z);
@@ -427,7 +449,7 @@
     const dx = f.d.x * f.carry + f.right.x * f.lat * 2 + f.drift.x * 1.6;
     const dz = f.d.z * f.carry + f.right.z * f.lat * 2 + f.drift.z * 1.6;
     const len = Math.hypot(dx, dz) || 1;
-    const run = f.carry * G.club.run * L.land;
+    const run = f.carry * G.club.run * L.land * W.weather.roll;
     const v = Math.sqrt(2 * L.fr * Math.max(0, run));
     G.vel = { x: dx / len * v, z: dz / len * v };
     G.phase = 'roll';
@@ -586,19 +608,19 @@
     hideOverlay();
     G.hi++;
     if (G.hi >= G.holes.length) return showRoundResult();
-    startHole();
+    enterHole();
   }
 
   function showRoundResult() {
     const tot = G.scores.reduce((s, x) => s + x.strokes, 0);
     const par = G.scores.reduce((s, x) => s + x.par, 0);
     const d = tot - par;
-    if (opts.onEvent) opts.onEvent({ type: 'round', total: tot, par });
+    if (opts.onEvent) opts.onEvent({ type: 'round', total: tot, par, course: opts.course || 'hills', weather: opts.weather || 'sunny', scores: G.scores.map(x => ({ n: x.n, par: x.par, strokes: x.strokes })) });
     G.phase = 'over';
     showOverlay(`
-      <div class="g-ov-eyebrow">SHORT ROUND ・ RESULT</div>
+      <div class="g-ov-eyebrow">${opts.course === 'all' ? 'ALL 9 HOLES' : 'SHORT ROUND'} ・ RESULT</div>
       <div class="g-ov-score">${tot}<small>（${d === 0 ? 'イーブン' : d > 0 ? '+' + d : d}）</small></div>
-      <div class="g-sc"><table><thead><tr><th>HOLE</th>${G.scores.map(s => `<th>${s.n}</th>`).join('')}<th>計</th></tr></thead>
+      <div class="g-sc ${G.scores.length > 5 ? 'g-sc-wide' : ''}"><table><thead><tr><th>HOLE</th>${G.scores.map(s => `<th>${s.n}</th>`).join('')}<th>計</th></tr></thead>
       <tbody><tr><th>PAR</th>${G.scores.map(s => `<td>${s.par}</td>`).join('')}<td>${par}</td></tr>
       <tr><th>打数</th>${G.scores.map(s => `<td><span class="g-sc-mark ${s.diff < 0 ? 'under' : s.diff > 0 ? 'over' : ''}">${s.strokes}</span></td>`).join('')}<td>${tot}</td></tr></tbody></table></div>
       <p class="g-ov-note">〇はバーディー以上、□はボギー以上。本物のスコアカードと同じ書き方です。</p>
@@ -840,6 +862,7 @@
     const deg = Math.atan2(rt, up) * 180 / Math.PI;
     ui.windArrow.style.transform = `rotate(${deg.toFixed(0)}deg)`;
     ui.windSp.textContent = `${G.wind.sp.toFixed(1)}m`;
+    ui.wx.textContent = W.weather.name;
   }
 
   /* ---------- マウント ---------- */
@@ -848,7 +871,7 @@
     <div class="g-hud">
       <div class="g-top">
         <div class="g-card g-hole"><div id="g-hole"></div><div class="g-stroke" id="g-stroke"></div></div>
-        <div class="g-card g-wind" aria-label="風"><svg viewBox="0 0 24 24" id="g-wind-arrow" aria-hidden="true"><path d="M12 3l6 9h-4v9h-4v-9H6z" fill="currentColor"/></svg><span id="g-wind-sp"></span></div>
+        <div class="g-card g-wind" aria-label="風"><span class="g-wx" id="g-wx"></span><svg viewBox="0 0 24 24" id="g-wind-arrow" aria-hidden="true"><path d="M12 3l6 9h-4v9h-4v-9H6z" fill="currentColor"/></svg><span id="g-wind-sp"></span></div>
       </div>
       <div class="g-msg" id="g-msg" hidden></div>
       <div class="g-bottom">
@@ -916,7 +939,7 @@
     ui = {
       root: container, hole: $('g-hole'), stroke: $('g-stroke'), windArrow: $('g-wind-arrow'), windSp: $('g-wind-sp'),
       msg: $('g-msg'), lie: $('g-lie'), dist: $('g-dist'), slope: $('g-slope'), club: $('g-club'), clubName: $('g-club-name'),
-      fill: $('g-fill'), zone: $('g-zone'), pmark: $('g-pmark'), marker: $('g-marker'), pct: $('g-pct'), shot: $('g-shot'), ov: $('g-ov'),
+      wx: $('g-wx'), fill: $('g-fill'), zone: $('g-zone'), pmark: $('g-pmark'), marker: $('g-marker'), pct: $('g-pct'), shot: $('g-shot'), ov: $('g-ov'),
     };
     ui.shot.addEventListener('pointerdown', (e) => { e.preventDefault(); tap(); });
     ui.shot.addEventListener('keydown', (e) => { if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); e.stopPropagation(); tap(); } });
@@ -931,6 +954,8 @@
 
     window.GolfScene.mount(container.querySelector('.scene-host'), {
       mode: 'play',
+      course: o.course === 'all' ? 'hills' : o.course,
+      weather: o.weather,
       onFrame: frame,
       onReady: () => {
         W = window.GolfScene.world();

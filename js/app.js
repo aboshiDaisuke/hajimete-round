@@ -195,7 +195,7 @@
       <button class="btn btn-primary btn-block" data-action="lu-close">やった！</button></div>`;
     el.hidden = false;
     confetti();
-    if (window.GolfBGM && S.bgm !== false) window.GolfBGM.jingle('fanfare');
+    if (window.GolfBGM && S.bgm !== false) window.GolfBGM.jingle('levelup');
     setTimeout(() => { const b = el.querySelector('button'); if (b) b.focus(); }, 50);
   }
   function confetti() {
@@ -1240,8 +1240,10 @@
     appbar(); tabbar();
     if (window.GolfBGM) {
       window.GolfBGM.setEnabled(S.bgm !== false);
-      if (route.startsWith('game-')) window.GolfBGM.play('course');
-      else if (route === 'play' || route === 'putting') window.GolfBGM.play('menu');
+      if (route === 'game-nearpin' || route === 'game-drive') window.GolfBGM.play('challenge');
+      else if (route.startsWith('game-')) window.GolfBGM.play('course');
+      else if (route === 'putting') window.GolfBGM.play('putt');
+      else if (route === 'play') window.GolfBGM.play('menu');
       else window.GolfBGM.stop();
     }
     const main = $('#main');

@@ -41,7 +41,8 @@
     swing: { top: 28 / 30, imp: 40 / 30, end: 62 / 30, down: 250, follow: 900 },
     putt: { top: 16 / 30, imp: 28 / 30, end: 40 / 30, down: 320, follow: 650 },
   };
-  const BALL_AT = { Iron: [0.0, 0.735], Driver: [0.1, 1.022], Putter: [0.0, 0.492] };
+  const GS = (window.GolferKit && window.GolferKit.SCALE) || 1;   // ゴルファーの縮尺
+  const BALL_AT = { Iron: [0.0, 0.735 * GS], Driver: [0.1 * GS, 1.022 * GS], Putter: [0.0, 0.492 * GS] };
   const clubKind = (c) => c.putter ? 'Putter' : ['1W', '5W', 'UT'].includes(c.id) ? 'Driver' : 'Iron';
   const bgm = (fn, ...a) => { if (window.GolfBGM && opts && opts.bgm && opts.bgm()) window.GolfBGM[fn](...a); };
 
@@ -112,59 +113,9 @@
     };
   }
 
-  /* ---------- 3D：Blender で作ったゴルファー（スキンメッシュ＋スイングアニメーション） ---------- */
+  /* ---------- 3D：Blender で作ったゴルファー（js/golfer3d.js） ---------- */
   function loadGolferModel(THREE, wear, onReady) {
-    const b64 = window.GOLFER_GLB_BASE64;
-    const Loader = window.THREE_ADDONS && window.THREE_ADDONS.GLTFLoader;
-    if (!b64 || !Loader) return;
-    try {
-      const bin = atob(b64);
-      const buf = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-      new Loader().parse(buf.buffer, '', (gltf) => {
-        const root = new THREE.Group();
-        root.add(gltf.scene);
-        const clubs = {};
-        gltf.scene.traverse((o) => {
-          if (o.isMesh) {
-            o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
-            if (o.material && o.material.name === 'Shirt') { o.material = o.material.clone(); o.material.color.set(wear); }
-          }
-          if (/^Club(Iron|Driver|Putter)$/.test(o.name)) clubs[o.name.slice(4)] = o;
-        });
-        const mixer = new THREE.AnimationMixer(gltf.scene);
-        const clip = (n) => gltf.animations.find(a => a.name === n || a.name.endsWith('|' + n));
-        const acts = {};
-        for (const n of ['Swing', 'Putt']) {
-          const c = clip(n);
-          if (!c) continue;
-          const a = mixer.clipAction(c);
-          a.play(); a.paused = true; a.setEffectiveWeight(0);
-          acts[n] = a;
-        }
-        let cur = null;
-        const api = {
-          root, model: true,
-          setClub(kind) {
-            Object.entries(clubs).forEach(([k, o]) => { o.visible = k === kind; });
-            const want = kind === 'Putter' ? 'Putt' : 'Swing';
-            if (cur !== want) {
-              Object.entries(acts).forEach(([k, a]) => a.setEffectiveWeight(k === want ? 1 : 0));
-              cur = want;
-            }
-          },
-          pose(theta, t) {
-            const a = acts[cur];
-            if (!a) return;
-            a.time = Math.max(0, Math.min(a.getClip().duration, t || 0));
-            mixer.update(0);
-          },
-        };
-        api.setClub('Iron');
-        api.pose(0, 0);
-        onReady(api);
-      }, () => {});
-    } catch (e) { /* 読み込めなければ簡易モデルのまま */ }
+    if (window.GolferKit) window.GolferKit.load(THREE, { character: opts.character ? opts.character() : 'female', wear: opts.wearTint ? opts.wearTint() : null }, onReady);
   }
 
   function makeTrail(THREE) {
@@ -342,6 +293,7 @@
     const gr = objs.golfer;
     G.swing = { theta: 0, anim: null };
     G.animT = 0;
+    G.react = null;
     if (gr.model) {
       const kind = clubKind(G.club);
       const [ox, oz] = BALL_AT[kind];
@@ -524,13 +476,22 @@
     G.chip = !G.putt;
     sfx('cup');
     bgm('jingle', 'cupin');
+    react('cheer');
     objs.ball.position.set(G.pin.x, groundY(G.pin.x, G.pin.z) + BALL_R, G.pin.z);
+  }
+
+  // ゴルファーの反応（喜ぶ・落ち込む）
+  function react(kind) {
+    if (!kind || !objs || !objs.golfer.model) return;
+    G.react = kind;
+    objs.golfer.react(kind);
   }
 
   function penalty(kind, from) {
     G.strokes++;
     sfx('bad');
     bgm('jingle', 'miss');
+    react('sad');
     if (kind === 'ob') {
       G.ball = { x: G.prev.x, z: G.prev.z };
       showMsg('OB', `1打罰で元の場所から打ち直し。次は${G.strokes + 1}打目`, 'bad', 2600);
@@ -592,6 +553,7 @@
     }
     const good = (G.mode === 'nearpin' && !res.fail && (res.holed || res.dist <= 5)) || (G.mode === 'drive' && res.fair && res.yards >= 200);
     if (good) { sfx('cheer'); bgm('jingle', 'fanfare'); if (window.GolfFX) window.GolfFX.confetti(); }
+    react(good ? 'cheer' : res.fail || (G.mode === 'drive' && !res.fair) ? 'sad' : null);
     showMsg(title, sub, res.fail ? 'bad' : 'good', 2200);
   }
 
@@ -610,6 +572,7 @@
     const hio = !gaveUp && strokes === 1;
     if (opts.onEvent) opts.onEvent({ type: 'hole', par: G.par, strokes, diff, chipin: !gaveUp && G.chip && strokes > 1, hio });
     if (diff <= -1 || hio) { sfx('cheer'); bgm('jingle', 'fanfare'); if (window.GolfFX) window.GolfFX.confetti(); }
+    react(diff <= -1 || hio ? 'cheer' : diff >= 2 ? 'sad' : null);
     const name = hio ? 'ホールインワン！' : term(diff);
     const chip = !gaveUp && G.chip && !hio ? 'チップイン！ ' : '';
     showOverlay(`
@@ -704,7 +667,10 @@
         G.animT = A.imp + (A.end - A.imp) * (1 - Math.pow(1 - k, 2));
       }
     }
-    objs.golfer.pose(G.swing.theta, G.animT);
+    const gf = objs.golfer;
+    if (gf.model && G.react) gf.tick(dt);
+    else if (gf.model && (G.phase === 'aim' || G.phase === 'intro') && !G.swing.anim) gf.idle(dt);
+    else gf.pose(G.swing.theta, G.animT);
 
     // ボールの移動
     if (G.phase === 'flight') {
@@ -778,7 +744,7 @@
       cam.position.lerp(tgt, ease(G.phase === 'aim' ? 6 : 10));
       const lk = G.club.putter ? Math.min(dist2(G.ball, G.pin), 8) * 0.6 : 22;
       const sd = objs.golfer.model ? -BALL_AT[clubKind(G.club)][1] * 0.45 : 0;
-      tgt.set(b.x + d.x * lk - d.z * sd, b.y + (G.club.putter ? -0.3 : -2.4), b.z + d.z * lk + d.x * sd);
+      tgt.set(b.x + d.x * lk - d.z * sd, b.y + (G.club.putter ? -0.8 : -4.2), b.z + d.z * lk + d.x * sd);
       objs.look.lerp(tgt, ease(8));
     } else if (G.phase === 'flight' || G.phase === 'roll' || G.phase === 'rest-wait' || G.phase === 'holed') {
       if (!G.putt) {
@@ -800,7 +766,7 @@
     // ゴルファーとボールの中間の後ろから映す（右打ちのゴルファーは目標線の左側に立つ）
     const model = objs && objs.golfer && objs.golfer.model;
     const oz = model ? BALL_AT[clubKind(G.club)][1] : 0.7;
-    const back = putt ? 3.6 : 5.6, up = putt ? 1.9 : 2.4, side = model ? -oz * 0.45 : (putt ? 1.0 : 1.1);
+    const back = putt ? 3.6 : 5.4, up = putt ? 1.8 : 2.3, side = model ? -oz * 0.45 : (putt ? 1.0 : 1.1);
     const x = b.x - d.x * back - d.z * side, z = b.z - d.z * back + d.x * side;
     return { x, y: Math.max(b.y + up, groundY(x, z) + 1.2), z };
   }

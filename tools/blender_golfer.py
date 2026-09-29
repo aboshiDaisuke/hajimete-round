@@ -1,13 +1,20 @@
-# ゴルファー（人体・服・クラブ・リグ・スイングアニメーション）を作るスクリプト
-#   blender -b -P tools/blender_golfer.py            → assets/golfer.glb
-#   blender -b -P tools/blender_golfer.py -- check   → 確認用のポーズ画像も書き出す
+# キャラ設定画（正面・横・背面の3面図）から作るゴルファーのモデル・リグ・アニメーション
+#   python3 tools/sheet_model.py female            … 設定画 → 体の形とテクスチャ（tools/build/）
+#   CHARACTER=female blender -b -P tools/blender_golfer.py   → assets/golfer-female.glb と golfer-female-glb.js
+#   アニメーション：Swing / Putt / Idle（待機）/ Cheer（喜び）/ Sad（落ち込み）
+#   ... -- check   → 確認用のポーズ画像も書き出す
 # 座標：Blender の Z が上。ゴルファーは -Y を向き、目標方向は +X（右打ち）。
-import bpy, bmesh, math, os, sys
+import bpy, bmesh, math, os, sys, json
+import numpy as np
 from mathutils import Vector, Matrix, Quaternion
 from mathutils.geometry import intersect_point_line
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 ASSETS = os.path.join(ROOT, 'assets')
+BUILD = os.path.join(ROOT, 'tools', 'build')
+sys.path.insert(0, os.path.join(ROOT, 'tools'))
+from sheet_uv import assign_uvs
+CH = os.environ.get('CHARACTER', 'female')
 CHECK = 'check' in sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else False
 OUT_CHECK = os.environ.get('GOLFER_CHECK_DIR', os.path.join(ROOT, 'dist', 'golfer_check'))
 
@@ -40,22 +47,14 @@ def mat(name, hexcol, rough=0.6, metal=0.0):
     return m
 
 
-M_SKIN = mat('Skin', '#e2b08c', 0.55)
-M_SHIRT = mat('Shirt', '#0d4731', 0.75)
-M_PANTS = mat('Pants', '#d9d2c3', 0.8)
-M_GLOVE = mat('Glove', '#f4f4f0', 0.6)
-M_SHOE = mat('Shoe', '#f5f5f2', 0.45)
-M_SOLE = mat('Sole', '#2b2b2b', 0.7)
-M_CAP = mat('Cap', '#f5f5f2', 0.7)
-M_HAIR = mat('Hair', '#2a1d14', 0.8)
-M_BELT = mat('Belt', '#1d1d1d', 0.4)
-M_EYE = mat('Eye', '#151515', 0.2)
-M_LIP = mat('Lip', '#b97a67', 0.5)
+M_EYE = mat('Eye', '#3a2418', 0.3)
+M_MOUTH = mat('MouthIn', '#7a1f2b', 0.5)
+M_TONGUE = mat('Tongue', '#ff7a86', 0.5)
 M_CHROME = mat('Chrome', '#d9dde2', 0.18, 1.0)
 M_BLACK = mat('ClubBlack', '#15171a', 0.25, 0.3)
 M_GRIP = mat('Grip', '#1f2124', 0.9)
 M_SHAFT = mat('Shaft', '#b8bcc2', 0.2, 1.0)
-M_BUTTON = mat('Button', '#f2f2ee', 0.4)
+M_BRIMW = mat('Brim', '#f3f3f5', 0.6)
 
 
 def new_obj(name, mesh):
@@ -70,86 +69,43 @@ def smooth(o):
 
 
 # =========================================================
-# 1. 骨格の位置（レストポーズ：腕を下ろしたAポーズ）
+# 1. 骨格の位置（設定画から読み取った関節。腕を下ろした A ポーズ）
 # =========================================================
-J = {
-    'pelvis': V((0, 0.0, 0.95)), 'spine': V((0, 0.0, 1.08)), 'chest': V((0, 0.0, 1.22)),
-    'neck': V((0, 0.0, 1.43)), 'head': V((0, 0.0, 1.53)), 'headtop': V((0, 0.0, 1.76)),
-}
-for s, sx in (('L', 1), ('R', -1)):
-    J['clav.' + s] = V((0.03 * sx, 0.0, 1.38))
-    J['shoulder.' + s] = V((0.185 * sx, 0.01, 1.405))
-    J['elbow.' + s] = V((0.365 * sx, 0.035, 1.19))       # 肘は少し後ろ（IKが自然に曲がる向き）
-    J['wrist.' + s] = V((0.525 * sx, 0.0, 1.0))
-    J['hand.' + s] = V((0.575 * sx, -0.005, 0.925))
-    J['hip.' + s] = V((0.095 * sx, 0.0, 0.93))
-    J['knee.' + s] = V((0.1 * sx, -0.02, 0.51))          # 膝は少し前
-    J['ankle.' + s] = V((0.1 * sx, 0.01, 0.085))
-    J['toe.' + s] = V((0.1 * sx, -0.14, 0.02))
+CFG = json.load(open(os.path.join(ROOT, 'tools', 'characters', CH + '.json'), encoding='utf-8'))
+JJ = json.load(open(os.path.join(BUILD, CH + '_joints.json')))
+MESH = np.load(os.path.join(BUILD, CH + '_mesh.npz'))
+J = {k: V(v) for k, v in JJ.items() if k not in ('eye', 'mouth', 'brim', 'skin')}
+
 
 # =========================================================
-# 2. 体（スキンモディファイアで骨格に肉付け → サブディビジョン）
+# 2. 体（設定画のシルエットから作った形を間引き、設定画そのものを貼る）
 # =========================================================
-pts, edges, radii = [], [], []
-
-
-def P(p, r):
-    pts.append(V(p)); radii.append(r)
-    return len(pts) - 1
-
-
-def chain(ids):
-    for a, b in zip(ids, ids[1:]):
-        edges.append((a, b))
-
-
-def lerp(a, b, t):
-    return a + (b - a) * t
-
-
-pelvis = P(J['pelvis'], (0.155, 0.115))
-waist = P((0, 0.0, 1.03), (0.138, 0.1))
-belly = P((0, -0.005, 1.12), (0.145, 0.105))
-chest = P((0, -0.005, 1.25), (0.162, 0.112))
-upper = P((0, 0.0, 1.35), (0.17, 0.1))
-neckb = P((0, 0.005, 1.425), (0.058, 0.058))
-neckt = P((0, 0.005, 1.52), (0.052, 0.052))
-chain([pelvis, waist, belly, chest, upper, neckb, neckt])
-body_ids = {}
-for s in ('L', 'R'):
-    sh = P(J['shoulder.' + s], (0.066, 0.066))
-    edges.append((upper, sh))
-    ua1 = P(lerp(J['shoulder.' + s], J['elbow.' + s], 0.3), (0.056, 0.056))
-    cuff = P(lerp(J['shoulder.' + s], J['elbow.' + s], 0.52), (0.059, 0.059))
-    cuff2 = P(lerp(J['shoulder.' + s], J['elbow.' + s], 0.56), (0.047, 0.047))
-    el = P(J['elbow.' + s], (0.041, 0.041))
-    fa = P(lerp(J['elbow.' + s], J['wrist.' + s], 0.35), (0.044, 0.042))
-    wr = P(J['wrist.' + s], (0.03, 0.024))
-    hd = P(J['hand.' + s], (0.042, 0.02))
-    tip = P(J['hand.' + s] + (J['hand.' + s] - J['wrist.' + s]).normalized() * 0.07, (0.03, 0.016))
-    chain([sh, ua1, cuff, cuff2, el, fa, wr, hd, tip])
-    hp = P(J['hip.' + s] + V((0, 0, -0.02)), (0.088, 0.088))
-    edges.append((pelvis, hp))
-    th = P(lerp(J['hip.' + s], J['knee.' + s], 0.45), (0.078, 0.08))
-    kn = P(J['knee.' + s], (0.056, 0.058))
-    cf = P(lerp(J['knee.' + s], J['ankle.' + s], 0.3), (0.056, 0.06))
-    an = P(J['ankle.' + s] + V((0, 0, 0.02)), (0.038, 0.04))
-    chain([hp, th, kn, cf, an])
-
 me = bpy.data.meshes.new('Body')
-me.from_pydata([tuple(p) for p in pts], edges, [])
+me.from_pydata(MESH['verts'].tolist(), [], MESH['faces'].tolist())
+me.update()
 body = new_obj('Body', me)
-skin = body.modifiers.new('Skin', 'SKIN')
-skin.branch_smoothing = 0.6
-for i, r in enumerate(radii):
-    body.data.skin_vertices[0].data[i].radius = r
-body.data.skin_vertices[0].data[pelvis].use_root = True
-sub = body.modifiers.new('Sub', 'SUBSURF')
-sub.levels = sub.render_levels = 2
 bpy.context.view_layer.objects.active = body
+for o_ in scene.objects:
+    o_.select_set(False)
 body.select_set(True)
-bpy.ops.object.modifier_apply(modifier='Skin')
-bpy.ops.object.modifier_apply(modifier='Sub')
+dec = body.modifiers.new('Dec', 'DECIMATE')
+dec.ratio = float(os.environ.get('RATIO', '0.1'))
+bpy.ops.object.modifier_apply(modifier='Dec')
+me = body.data
+BV = np.zeros(len(me.vertices) * 3, np.float32); me.vertices.foreach_get('co', BV); BV = BV.reshape(-1, 3)
+BF = np.zeros(len(me.polygons) * 3, np.int32); me.polygons.foreach_get('vertices', BF); BF = BF.reshape(-1, 3)
+print('BODY faces', len(BF), 'verts', len(BV))
+uvs = assign_uvs(BV, BF, MESH)
+me.uv_layers.new(name='UV').data.foreach_set('uv', uvs.reshape(-1, 2).ravel())
+M_BODY = bpy.data.materials.new('Body')
+M_BODY.use_nodes = True
+tex_img = bpy.data.images.load(os.path.join(BUILD, CH + '_tex.jpg'))
+tex_node = M_BODY.node_tree.nodes.new('ShaderNodeTexImage')
+tex_node.image = tex_img
+bsdf = M_BODY.node_tree.nodes['Principled BSDF']
+bsdf.inputs['Roughness'].default_value = 0.85
+M_BODY.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
+body.data.materials.append(M_BODY)
 smooth(body)
 
 # =========================================================
@@ -223,73 +179,92 @@ DEFORM = ['hips', 'spine', 'chest', 'neck', 'head'] + [f'{b}.{s}' for s in ('L',
 REST = {b.name: (b.head_local.copy(), b.tail_local.copy()) for b in arm_data.bones}
 
 # =========================================================
-# 4. 体の重み付けと素材の割り当て（最寄りの骨で決める）
+# 4. 体の重み付け（領域ごとに候補の骨を絞り、最寄りの骨からの距離で決める）
 # =========================================================
 for n in DEFORM:
     body.vertex_groups.new(name=n)
+BONES = list(DEFORM)
 
 
-def seg_info(p, n):
-    a, b = REST[n]
-    q, t = intersect_point_line(p, a, b)
-    t = max(0.0, min(1.0, t))
-    q = a + (b - a) * t
-    return (p - q).length, t
+def seg_dist(P, a, b):
+    ab = np.array(b - a, np.float64)
+    t = np.clip(((P - np.array(a)) @ ab) / (ab @ ab), 0, 1)
+    q = np.array(a) + t[:, None] * ab
+    return np.linalg.norm(P - q, axis=1)
 
 
-# 腕の骨が胴体の点を拾わないよう、領域ごとに候補を絞る
-def candidates(p):
-    ax = abs(p.x)
-    side = 'L' if p.x >= 0 else 'R'
-    if ax > 0.2 or (ax > 0.15 and p.z < 1.33 and p.z > 0.9):
-        return [f'clavicle.{side}', f'upperarm.{side}', f'forearm.{side}', f'hand.{side}', 'chest']
-    if p.z < 0.9 and ax > 0.02:
-        return [f'thigh.{side}', f'shin.{side}', f'foot.{side}', 'hips']
-    return ['hips', 'spine', 'chest', 'neck', 'head', f'clavicle.{side}', f'upperarm.{side}', f'thigh.{side}']
+P3 = BV.astype(np.float64)
+# 手は設定画のままだと大きな箱のように見えるので、手首を中心に少し小さくする
+hand_mask = (P3[:, 2] < J['wrist.L'].z - 0.015) & (P3[:, 2] > J['hand.L'].z - 0.16) & (np.abs(P3[:, 0]) > max(abs(J[f'{b}.L'].x) for b in ('hip', 'knee', 'ankle')) + 0.09)
+for sd, sg in (('L', 1), ('R', -1)):
+    m_ = hand_mask & (np.sign(P3[:, 0]) == sg)
+    c_ = np.array(J['wrist.' + sd])
+    P3[m_] = c_ + (P3[m_] - c_) * 0.82
+me.vertices.foreach_set('co', P3.astype(np.float32).ravel())
+me.update()
+D = np.stack([seg_dist(P3, *REST[n]) for n in BONES], axis=1)
+Xv, Yv, Zv = P3[:, 0], P3[:, 1], P3[:, 2]
+dzz = float(MESH['dz'])
+hw_full = MESH['hw']
+hw_full = np.array([hw_full[max(0, i - 8):i + 9].max() for i in range(len(hw_full))])   # 裾のすぐ下でも胴の幅が 0 にならないよう、前後を含めた最大値にする
+hwv = np.interp(Zv, np.arange(len(hw_full)) * dzz, hw_full)                    # 高さごとの胴（スカート）の半幅
+z_arm = (J['pelvis'].z + 0.35)
+hw_torso = float(np.interp(z_arm, np.arange(len(hw_full)) * dzz, hw_full))     # 胴の半幅（わきの下より下）
+split_z = float(np.interp(0, [0, 1], [0, 1])) + (float(MESH['gf']) - CFG['split_y']) * float(MESH['s'])
+neck_z, head_z = J['neck'].z, J['head'].z
+shoulder_z = J['shoulder.L'].z
+# 領域
+is_head = Zv > head_z
+is_neckzone = (Zv > neck_z - 0.02) & ~is_head
+below_hem = Zv < split_z - 0.005
+torso_hw_z = np.where((Zv > J['chest'].z - 0.1) & (Zv < neck_z), hw_torso, hwv)
+leg_x_max = max(abs(J[f'{b}.L'].x) for b in ('hip', 'knee', 'ankle')) + 0.09     # 脚より外側にある手は、腕の一部
+arm_zone = (Zv > J['hand.L'].z - 0.16) & (~below_hem | (np.abs(Xv) > leg_x_max)) & ~is_head & ~is_neckzone
+# 胴と腕の境目はなめらかにつなぐ（急に切り替えると、肩まわりが板のように伸びる）
+t_arm = np.where(arm_zone, np.clip((np.abs(Xv) - (torso_hw_z - 0.02)) / 0.07, 0, 1), 0.0)
+t_arm = t_arm * t_arm * (3 - 2 * t_arm)
+is_leg = below_hem & ~(t_arm > 0.5)
+bi = {n: i for i, n in enumerate(BONES)}
 
 
-for v in body.data.vertices:
-    p = v.co
-    ds = sorted(((seg_info(p, n)[0], n) for n in candidates(p)))[:3]
-    ws = [(1.0 / (d + 0.012) ** 5, n) for d, n in ds]
+def cand_matrix(fn):
+    m = np.zeros((len(P3), len(BONES)), bool)
+    for i in range(len(P3)):
+        for n in fn('L' if Xv[i] >= 0 else 'R', i):
+            m[i, bi[n]] = True
+    return m
+
+
+def norm_top(allow, k=3):
+    W_ = np.where(allow, 1.0 / (D + 0.012) ** 5, 0.0)
+    keep = np.zeros_like(W_)
+    idx = np.argsort(-W_, axis=1)[:, :k]
+    np.put_along_axis(keep, idx, np.take_along_axis(W_, idx, axis=1), axis=1)
+    return keep / (keep.sum(1, keepdims=True) + 1e-12)
+
+
+A_head = cand_matrix(lambda sd, i: ['head'])
+A_neck = cand_matrix(lambda sd, i: ['neck', 'head', 'chest'])
+A_arm = cand_matrix(lambda sd, i: [f'clavicle.{sd}', f'upperarm.{sd}', f'forearm.{sd}', f'hand.{sd}', 'chest'])
+A_leg = cand_matrix(lambda sd, i: [f'thigh.{sd}', f'shin.{sd}', f'foot.{sd}', 'hips'])
+A_tor = cand_matrix(lambda sd, i: ['hips', 'spine', 'chest', 'neck', 'clavicle.L', 'clavicle.R'])
+Wh, Wn, Wa, Wl, Wtor = (norm_top(m) for m in (A_head, A_neck, A_arm, A_leg, A_tor))
+Wt = np.where(is_head[:, None], Wh, np.where(is_neckzone[:, None], Wn, np.where(is_leg[:, None], Wl, t_arm[:, None] * Wa + (1 - t_arm[:, None]) * Wtor)))
+# 4本まで（glTF の上限）に絞って正規化
+idx = np.argsort(-Wt, axis=1)[:, :4]
+for i in range(len(P3)):
+    ws = [(Wt[i, j], j) for j in idx[i] if Wt[i, j] > 0.02]
     tot = sum(w for w, _ in ws)
-    for w, n in ws:
-        if w / tot > 0.02:
-            body.vertex_groups[n].add([v.index], w / tot, 'REPLACE')
-
-for m_ in (M_SKIN, M_SHIRT, M_PANTS, M_GLOVE):
-    body.data.materials.append(m_)
-IDX = {'Skin': 0, 'Shirt': 1, 'Pants': 2, 'Glove': 3}
-for poly in body.data.polygons:
-    c = poly.center
-    ds = sorted(((seg_info(c, n)[0], n) for n in candidates(c)))
-    n = ds[0][1]
-    t = seg_info(c, n)[1]
-    if n in ('neck', 'head'):
-        k = 'Skin' if c.z > 1.445 else 'Shirt'
-    elif n.startswith('upperarm'):
-        k = 'Shirt' if t < 0.54 else 'Skin'
-    elif n.startswith('forearm'):
-        k = 'Skin'
-    elif n.startswith('hand'):
-        k = 'Glove' if n.endswith('.L') else 'Skin'
-    elif n in ('chest', 'spine') or n.startswith('clavicle'):
-        k = 'Shirt'
-    elif n == 'hips':
-        k = 'Shirt' if c.z > 0.985 else 'Pants'
-    else:
-        k = 'Pants'
-    poly.material_index = IDX[k]
-
+    for w, j in ws:
+        body.vertex_groups[BONES[j]].add([i], w / tot, 'REPLACE')
 body.parent = arm
 am = body.modifiers.new('Armature', 'ARMATURE')
 am.object = arm
 
 # =========================================================
-# 5. 頭・服の小物・靴（骨に直接くっつける）
+# 5. 顔の重ね部品（表情の切り替え用）・バイザーのつば（骨に直接くっつける）
+#    ふだんは設定画の顔がそのまま見える。まばたき・喜び・落ち込みのときだけ重ねて表示する。
 # =========================================================
-
-
 def attach(o, bone_name):
     bpy.context.view_layer.update()
     mw = o.matrix_world.copy()
@@ -299,12 +274,12 @@ def attach(o, bone_name):
     o.matrix_world = mw
 
 
-def uv_sphere(name, loc, scale, m, seg=32, rings=16):
-    me = bpy.data.meshes.new(name)
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=seg, v_segments=rings, radius=1.0)
-    bm.to_mesh(me); bm.free()
-    o = new_obj(name, me)
+def uv_sphere(name, loc, scale, m, seg=20, rings=12):
+    me_ = bpy.data.meshes.new(name)
+    bm_ = bmesh.new()
+    bmesh.ops.create_uvsphere(bm_, u_segments=seg, v_segments=rings, radius=1.0)
+    bm_.to_mesh(me_); bm_.free()
+    o = new_obj(name, me_)
     o.location = loc
     o.scale = scale
     o.data.materials.append(m)
@@ -312,129 +287,76 @@ def uv_sphere(name, loc, scale, m, seg=32, rings=16):
     return o
 
 
-def apply_tf(o):
+def curve_mesh(name, pts, r, m):
+    cu = bpy.data.curves.new(name, 'CURVE')
+    cu.dimensions = '3D'
+    cu.bevel_depth = r
+    cu.bevel_resolution = 3
+    cu.use_fill_caps = True
+    sp = cu.splines.new('POLY')
+    sp.points.add(len(pts) - 1)
+    for i, p in enumerate(pts):
+        sp.points[i].co = (p[0], p[1], p[2], 1)
+    o = new_obj(name, cu)
     bpy.context.view_layer.objects.active = o
     for x in scene.objects:
         x.select_set(False)
     o.select_set(True)
-    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
-
-
-HC = V((0, -0.005, 1.625))   # 頭の中心
-head = uv_sphere('Head', HC, (0.083, 0.095, 0.112), M_SKIN)
-# あごと頬：下半分を少し前に絞る
-apply_tf(head)
-for v in head.data.vertices:
-    if v.co.z < 0:
-        k = min(1.0, -v.co.z / 0.11)
-        v.co.x *= 1 - 0.18 * k
-        v.co.y *= 1 - 0.08 * k
-    if v.co.y < -0.05 and v.co.z < 0.03:
-        v.co.y -= 0.008 * (1 - abs(v.co.z) / 0.1)
-nose = uv_sphere('Nose', HC + V((0, -0.093, -0.01)), (0.014, 0.022, 0.028), M_SKIN, 16, 10)
-for s in (1, -1):
-    uv_sphere('Ear' + str(s), HC + V((0.082 * s, 0.005, 0.0)), (0.012, 0.022, 0.032), M_SKIN, 16, 10)
-    uv_sphere('Eye' + str(s), HC + V((0.032 * s, -0.083, 0.018)), (0.011, 0.006, 0.008), M_EYE, 12, 8)
-    uv_sphere('Brow' + str(s), HC + V((0.032 * s, -0.087, 0.038)), (0.02, 0.005, 0.004), M_HAIR, 12, 6)
-uv_sphere('Mouth', HC + V((0, -0.085, -0.045)), (0.02, 0.005, 0.004), M_LIP, 12, 6)
-# 髪（帽子の下からのぞく後頭部と横）
-hair = uv_sphere('Hair', HC + V((0, 0.006, 0.006)), (0.087, 0.098, 0.113), M_HAIR)
-apply_tf(hair)
-bm = bmesh.new(); bm.from_mesh(hair.data)
-bmesh.ops.delete(bm, geom=[v for v in bm.verts if v.co.y < -0.035 or v.co.z < -0.045 or v.co.z > 0.03 or (v.co.y < 0.02 and v.co.z < -0.01)], context='VERTS')
-bm.to_mesh(hair.data); bm.free()
-# キャップ
-cap = uv_sphere('Cap', HC + V((0, 0.0, 0.018)), (0.092, 0.103, 0.1), M_CAP)
-apply_tf(cap)
-bm = bmesh.new(); bm.from_mesh(cap.data)
-bmesh.ops.delete(bm, geom=[v for v in bm.verts if v.co.z < 0.0], context='VERTS')
-bm.to_mesh(cap.data); bm.free()
-bpy.context.view_layer.objects.active = cap
-sol = cap.modifiers.new('Sol', 'SOLIDIFY'); sol.thickness = 0.004
-bpy.ops.object.modifier_apply(modifier='Sol')
-brim_me = bpy.data.meshes.new('Brim')
-bm = bmesh.new()
-bmesh.ops.create_circle(bm, cap_ends=True, radius=1.0, segments=32)
-for v in bm.verts:
-    v.co.x *= 0.085; v.co.y = v.co.y * 0.075
-bmesh.ops.delete(bm, geom=[v for v in bm.verts if v.co.y > 0.02], context='VERTS')
-bm.to_mesh(brim_me); bm.free()
-brim = new_obj('Brim', brim_me)
-brim.location = HC + V((0, -0.075, 0.02))
-brim.rotation_euler = (math.radians(-12), 0, 0)
-brim.data.materials.append(M_CAP)
-bpy.context.view_layer.objects.active = brim
-sol = brim.modifiers.new('Sol', 'SOLIDIFY'); sol.thickness = 0.006
-bpy.ops.object.modifier_apply(modifier='Sol')
-for o in [head, nose, hair, cap, brim] + [o for o in scene.objects if o.name.startswith(('Ear', 'Eye', 'Brow', 'Mouth'))]:
-    attach(o, 'head')
-
-# ポロシャツの襟とボタン
-collar_me = bpy.data.meshes.new('Collar')
-bm = bmesh.new()
-bmesh.ops.create_cone(bm, cap_ends=False, segments=32, radius1=0.072, radius2=0.062, depth=0.04)
-bm.to_mesh(collar_me); bm.free()
-collar = new_obj('Collar', collar_me)
-collar.location = (0, 0.008, 1.445)
-collar.data.materials.append(M_SHIRT)
-bpy.context.view_layer.objects.active = collar
-sol = collar.modifiers.new('Sol', 'SOLIDIFY'); sol.thickness = 0.006
-bpy.ops.object.modifier_apply(modifier='Sol')
-smooth(collar)
-attach(collar, 'chest')
-for i, z in enumerate((1.4, 1.37)):
-    b_ = uv_sphere('Button' + str(i), (0, -0.108 + i * 0.004, z), (0.006, 0.003, 0.006), M_BUTTON, 10, 6)
-    attach(b_, 'chest')
-# ベルト
-belt_me = bpy.data.meshes.new('Belt')
-bm = bmesh.new()
-bmesh.ops.create_cone(bm, cap_ends=False, segments=40, radius1=1.0, radius2=1.0, depth=0.032)
-for v in bm.verts:
-    v.co.x *= 0.142; v.co.y *= 0.106
-bm.to_mesh(belt_me); bm.free()
-belt = new_obj('Belt', belt_me)
-belt.location = (0, 0.0, 0.985)
-belt.data.materials.append(M_BELT)
-bpy.context.view_layer.objects.active = belt
-sol = belt.modifiers.new('Sol', 'SOLIDIFY'); sol.thickness = 0.007
-bpy.ops.object.modifier_apply(modifier='Sol')
-smooth(belt)
-buckle = bpy.data.meshes.new('Buckle')
-bm = bmesh.new(); bmesh.ops.create_cube(bm, size=1.0); bm.to_mesh(buckle); bm.free()
-bk = new_obj('Buckle', buckle)
-bk.location = (0, -0.112, 0.985); bk.scale = (0.03, 0.006, 0.024)
-bk.data.materials.append(M_CHROME)
-attach(belt, 'hips'); attach(bk, 'hips')
-
-
-# ゴルフシューズ（丸みのある箱＋黒いソール）
-def shoe(s):
-    sx = 1 if s == 'L' else -1
-    me = bpy.data.meshes.new('Shoe.' + s)
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=1.0)
-    for v in bm.verts:
-        x, y, z = v.co.x, v.co.y, v.co.z
-        # 足の形：つま先は細く低く、かかとは丸く高く、底は平ら
-        w = 0.047 * (1 - max(0.0, -y - 0.35) * 0.55)
-        hgt = 0.05 if z > 0 else 0.012
-        top = 1 - max(0.0, -y) * 0.45
-        v.co.x = x * w
-        v.co.y = y * 0.142
-        v.co.z = z * hgt * (top if z > 0 else 1) + 0.012
-    bm.to_mesh(me); bm.free()
-    o = new_obj('Shoe.' + s, me)
-    o.location = (0.1 * sx, -0.05, 0.0)
-    o.data.materials.append(M_SHOE)
-    o.data.materials.append(M_SOLE)
-    for p in o.data.polygons:
-        if p.center.z < 0.009:
-            p.material_index = 1
+    bpy.ops.object.convert(target='MESH')
+    o = bpy.context.view_layer.objects.active
+    bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
+    o.data.materials.append(m)
     smooth(o)
-    attach(o, 'foot.' + s)
+    return o
 
 
-shoe('L'); shoe('R')
+def arc_pts(cx, cy, cz, rx, rz, a0, a1, n=10):
+    return [(cx + rx * math.cos(math.radians(a0 + (a1 - a0) * i / n)), cy, cz + rz * math.sin(math.radians(a0 + (a1 - a0) * i / n))) for i in range(n + 1)]
+
+
+def surface_y(x, z):
+    """顔の表面（正面側）の y。前から光線を当てて調べる"""
+    bpy.context.view_layer.update()
+    ok, loc, nrm_, idx_ = body.ray_cast(V((x, -1.0, z)), V((0, 1, 0)))
+    return loc.y if ok else -0.15
+
+
+M_SKINP = mat('SkinPatch', JJ['skin'], 0.6)
+face_objs = []
+for i, (ex, ez) in enumerate(JJ['eye']):
+    sn = '1' if ex > (JJ['eye'][0][0] + JJ['eye'][1][0]) / 2 else '-1'
+    ys = surface_y(ex, ez)
+    cover = uv_sphere('EyeCover' + sn, (ex, ys + 0.013, ez), (0.056, 0.02, 0.05), M_SKINP)
+    happy = curve_mesh('EyeHappy' + sn, arc_pts(ex, ys - 0.006, ez - 0.012, 0.038, 0.042, 20, 160), 0.0085, M_EYE)
+    closed = curve_mesh('EyeClosed' + sn, arc_pts(ex, ys - 0.006, ez + 0.004, 0.038, 0.02, 200, 340), 0.0085, M_EYE)
+    face_objs += [cover, happy, closed]
+mx, mz = JJ['mouth']
+my = surface_y(mx, mz)
+face_objs.append(uv_sphere('MouthCover', (mx, my + 0.012, mz), (0.046, 0.02, 0.034), M_SKINP))
+face_objs.append(uv_sphere('MouthOpen', (mx, my + 0.004, mz - 0.002), (0.03, 0.014, 0.024), M_MOUTH))
+face_objs.append(uv_sphere('Tongue', (mx, my - 0.001, mz - 0.011), (0.017, 0.008, 0.011), M_TONGUE))
+face_objs.append(curve_mesh('MouthSad', arc_pts(mx, my - 0.004, mz - 0.024, 0.026, 0.016, 30, 150), 0.0065, M_MOUTH))
+# バイザーのつば（薄い半楕円の板。胴体の形からは外してある）
+B = JJ['brim']
+s_ = float(MESH['s'])
+zb, zt = (float(MESH['gf']) - B['base_z_px']) * s_, (float(MESH['gf']) - B['tip_z_px']) * s_
+half_w, length = B['half_w_px'] * s_, B['base_y'] - B['tip_y']
+bm_ = bmesh.new()
+pts_ = [bm_.verts.new((half_w * math.cos(math.radians(a_)), -length * math.sin(math.radians(a_)), 0)) for a_ in range(0, 181, 10)]
+bm_.faces.new(pts_)
+brim_me = bpy.data.meshes.new('Brim')
+bm_.to_mesh(brim_me); bm_.free()
+brim = new_obj('Brim', brim_me)
+brim.location = (0, B['base_y'], zb)
+brim.rotation_euler = (math.atan2(zt - zb, length), 0, 0)
+brim.data.materials.append(M_BRIMW)
+bpy.context.view_layer.objects.active = brim
+sol = brim.modifiers.new('Sol', 'SOLIDIFY'); sol.thickness = 0.008
+bpy.ops.object.modifier_apply(modifier='Sol')
+smooth(brim)
+face_objs.append(brim)
+for o in face_objs:
+    attach(o, 'head')
 
 # =========================================================
 # 6. クラブ（アイアン・ドライバー・パター）を club の骨に付ける
@@ -483,14 +405,14 @@ def club(kind):
     if kind == 'Driver':
         bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=1.0)
         for v in bm.verts:
-            v.co.x *= 0.05; v.co.y *= 0.058; v.co.z *= 0.03
+            v.co.x *= 0.06; v.co.y *= 0.07; v.co.z *= 0.036
             if v.co.x > 0.03:
                 v.co.x = 0.03 + (v.co.x - 0.03) * 0.3
         m_ = M_BLACK
     elif kind == 'Iron':
         bmesh.ops.create_cube(bm, size=1.0)
         for v in bm.verts:
-            v.co.x *= 0.02; v.co.y *= 0.078; v.co.z *= 0.046
+            v.co.x *= 0.022; v.co.y *= 0.086; v.co.z *= 0.05
             if v.co.y > 0:
                 v.co.z *= 0.75
         bmesh.ops.bevel(bm, geom=bm.edges[:], offset=0.005, segments=2, affect='EDGES')
@@ -498,12 +420,12 @@ def club(kind):
     else:
         bmesh.ops.create_cube(bm, size=1.0)
         for v in bm.verts:
-            v.co.x *= 0.024; v.co.y *= 0.105; v.co.z *= 0.022
+            v.co.x *= 0.026; v.co.y *= 0.115; v.co.z *= 0.026
         bmesh.ops.bevel(bm, geom=bm.edges[:], offset=0.004, segments=2, affect='EDGES')
         m_ = M_CHROME
     bm.to_mesh(me); bm.free()
     h = new_obj(kind + 'Head', me)
-    h.location = head_c + toe * (0.03 if kind != 'Putter' else 0.04) + V((0, 0, 0.012))
+    h.location = head_c + toe * (0.034 if kind != 'Putter' else 0.046) + V((0, 0, 0.012))
     h.data.materials.append(m_)
     smooth(h)
     parts.append(h)
@@ -523,6 +445,9 @@ PB = arm.pose.bones
 for pb in PB:
     pb.rotation_mode = 'QUATERNION'
 for s in ('L', 'R'):
+    # 設定画のキャラは腕が短めなので、IK で少しだけ腕が伸びるようにする
+    for bn_ in ('upperarm.', 'forearm.'):
+        PB[bn_ + s].ik_stretch = 0.18
     ik = PB['hand.' + s].constraints.new('IK')
     ik.target = arm; ik.subtarget = 'ik_hand.' + s; ik.chain_count = 3
     ik = PB['shin.' + s].constraints.new('IK')
@@ -604,11 +529,11 @@ def key_all(frame):
 
 
 def pose(frame, tilt, spine_tilt, hips_turn, chest_turn, hips_move, H, C, T, head_turn, head_tilt=4,
-         r_heel=0.0, l_knee=0.0, r_knee=0.0):
+         r_heel=0.0, l_knee=0.0, r_knee=0.0, hop=0.0):
     scene.frame_set(frame)
     reset_pose()
     # 腰：前傾・回転・移動
-    move_world('hips', hips_move)
+    move_world('hips', (hips_move[0], hips_move[1], hips_move[2] + hop))
     rot_world('hips', (1, 0, 0), tilt)
     rot_own('hips', hips_turn)
     rot_world('spine', (1, 0, 0), spine_tilt * 0.5)
@@ -620,6 +545,8 @@ def pose(frame, tilt, spine_tilt, hips_turn, chest_turn, hips_move, H, C, T, hea
     rot_own('head', head_turn * 0.5)
     rot_world('neck', (1, 0, 0), head_tilt * 0.6)
     rot_world('head', (1, 0, 0), head_tilt * 0.4)
+    if hop:
+        move_world('ik_foot.L', (0, 0, hop)); move_world('ik_foot.R', (0, 0, hop))
     # 足：右かかとを上げる（つま先を支点に）
     if r_heel:
         pb = arm.pose.bones['ik_foot.R']
@@ -683,7 +610,67 @@ putt_pose(28, 0, 0)
 putt_pose(40, 0.22, 0.07)
 putt_action = act
 
-for a in (swing_action, putt_action):
+# =========================================================
+# 10b. アニメーション：待機（息づかい＋クラブをちょんちょん）・喜び・落ち込み
+# =========================================================
+def new_action(name):
+    act = bpy.data.actions.new(name)
+    arm.animation_data.action = act
+    prev_q.clear()
+    return act
+
+
+def bez(act):
+    for fc in getattr(act, 'fcurves', []):
+        for k in fc.keyframe_points:
+            k.interpolation = 'BEZIER'
+
+
+def sway(dx):
+    return V(C0) + V((dx, 0, 0.02 * abs(dx) / 0.12))
+
+
+def pose2(frame, **kw):
+    kw.setdefault('hips_turn', 0); kw.setdefault('chest_turn', 0)
+    pose(frame, **kw)
+
+
+idle_action = new_action('Idle')
+A2 = dict(tilt=22, spine_tilt=12)
+pose2(0, **A2, hips_move=(0, 0.055, -0.045), H=H0, C=C0, T=(0, -1, 0), head_turn=0)
+pose2(15, tilt=21, spine_tilt=12, hips_move=(0.012, 0.055, -0.038), H=H0 + V((-0.02, 0, 0.005)), C=sway(-0.14), T=(0, -1, 0), head_turn=4)
+pose2(30, tilt=22.5, spine_tilt=12.5, hips_move=(0, 0.055, -0.052), H=H0, C=C0, T=(0, -1, 0), head_turn=0)
+pose2(45, tilt=21, spine_tilt=12, hips_move=(-0.012, 0.055, -0.038), H=H0 + V((0.02, 0, 0.005)), C=sway(0.14), T=(0, -1, 0), head_turn=-4)
+pose2(60, **A2, hips_move=(0, 0.055, -0.045), H=H0, C=C0, T=(0, -1, 0), head_turn=0)
+bez(idle_action)
+
+cheer_action = new_action('Cheer')
+pose2(0, **A2, hips_move=(0, 0.055, -0.045), H=H0, C=C0, T=(0, -1, 0), head_turn=0)
+pose2(8, tilt=30, spine_tilt=18, hips_move=(0, 0.07, -0.15), H=(0.03, -0.27, 0.66), C=(0.12, -0.3, -0.94), T=(0, -1, 0), head_turn=0)
+pose2(16, tilt=-4, spine_tilt=-6, hips_move=(0, 0.02, 0.0), hop=0.16, H=(0.1, -0.4, 1.35), C=(0.7, 0.0, 0.7), T=(0, -1, 0), head_turn=0, head_tilt=-14)
+pose2(24, tilt=-6, spine_tilt=-8, hips_move=(0, 0.02, 0.0), hop=0.24, H=(0.12, -0.42, 1.5), C=(0.72, 0.0, 0.69), T=(0, -1, 0), head_turn=0, head_tilt=-18)
+pose2(32, tilt=4, spine_tilt=-2, hips_move=(0, 0.03, -0.09), H=(0.1, -0.4, 1.3), C=(0.7, 0.0, 0.7), T=(0, -1, 0), head_turn=0, head_tilt=-10)
+pose2(40, tilt=-2, spine_tilt=-5, hips_move=(0, 0.02, -0.03), H=(0.12, -0.41, 1.42), C=(0.72, 0.0, 0.69), T=(0, -1, 0), head_turn=0, head_tilt=-14)
+pose2(50, tilt=-3, spine_tilt=-6, hips_move=(0, 0.02, -0.012), H=(0.12, -0.42, 1.46), C=(0.74, 0.0, 0.67), T=(0, -1, 0), head_turn=0, head_tilt=-16)
+bez(cheer_action)
+
+sad_action = new_action('Sad')
+pose2(0, **A2, hips_move=(0, 0.055, -0.045), H=H0, C=C0, T=(0, -1, 0), head_turn=0)
+pose2(14, tilt=32, spine_tilt=22, hips_move=(0, 0.09, -0.1), H=(0.03, -0.22, 0.66), C=(0.1, -0.25, -0.96), T=(0, -1, 0), head_turn=0, head_tilt=26)
+pose2(30, tilt=33, spine_tilt=23, hips_move=(0.015, 0.09, -0.105), H=(0.05, -0.22, 0.66), C=(0.12, -0.25, -0.96), T=(0, -1, 0), head_turn=8, head_tilt=28)
+pose2(46, tilt=32, spine_tilt=22, hips_move=(-0.015, 0.09, -0.1), H=(0.01, -0.22, 0.66), C=(0.08, -0.25, -0.96), T=(0, -1, 0), head_turn=-8, head_tilt=26)
+pose2(60, tilt=32, spine_tilt=22, hips_move=(0, 0.09, -0.1), H=(0.03, -0.22, 0.66), C=(0.1, -0.25, -0.96), T=(0, -1, 0), head_turn=0, head_tilt=26)
+bez(sad_action)
+
+# キャラ紹介用：背すじを伸ばして正面を向き、クラブを地面について立つ（息づかいだけ動く）
+stand_action = new_action('Stand')
+ST = dict(tilt=0, spine_tilt=0, H=(0.10, -0.20, 0.92), C=(0.02, -0.10, -0.995), T=(0, -1, 0), head_turn=0)
+pose2(0, **ST, hips_move=(0.0, 0.0, 0.0), head_tilt=0)
+pose2(30, tilt=0.8, spine_tilt=0.6, H=(0.10, -0.20, 0.925), C=(0.02, -0.10, -0.995), T=(0, -1, 0), head_turn=2, hips_move=(0.0, 0.0, 0.006), head_tilt=-1.5)
+pose2(60, **ST, hips_move=(0.0, 0.0, 0.0), head_tilt=0)
+bez(stand_action)
+
+for a in (swing_action, putt_action, idle_action, cheer_action, sad_action, stand_action):
     a.use_fake_user = True
     tr = arm.animation_data.nla_tracks.new()
     tr.name = a.name
@@ -706,7 +693,7 @@ def world_of(name):
     return arm.matrix_world @ arm.pose.bones[name].matrix
 
 
-for a, frames in ((swing_action, (0, 10, 18, 28, 35, 40, 45, 52, 62)), (putt_action, (0, 16, 28, 40))):
+for a, frames in ((swing_action, (0, 10, 18, 28, 35, 40, 45, 52, 62)), (putt_action, (0, 16, 28, 40)), (idle_action, (0, 15, 45)), (cheer_action, (8, 16, 24, 32, 50)), (sad_action, (14, 30)), (stand_action, (0, 30))):
     for f in frames:
         eval_frame(a, f)
         errs = []
@@ -724,7 +711,10 @@ if CHECK:
     os.makedirs(OUT_CHECK, exist_ok=True)
     scene.render.engine = 'BLENDER_WORKBENCH'
     scene.display.shading.light = 'STUDIO'
-    scene.display.shading.color_type = 'MATERIAL'
+    scene.display.shading.color_type = 'TEXTURE'
+    scene.display.shading.light = 'FLAT'
+    for o_ in face_objs:
+        o_.hide_render = True
     scene.display.shading.show_shadows = True
     scene.render.resolution_x = 420
     scene.render.resolution_y = 520
@@ -743,12 +733,27 @@ if CHECK:
         bpy.ops.render.render(write_still=True)
 
     ballo.location = BALL_IRON
-    for a, frames in ((swing_action, (0, 10, 18, 28, 35, 40, 45, 62)), (putt_action, (0, 16, 40))):
+    for a, frames in ((swing_action, (0, 10, 18, 28, 35, 40, 45, 62)), (putt_action, (0, 16, 40)), (idle_action, (0,)), (cheer_action, (8, 24, 50)), (sad_action, (14,)), (stand_action, (0,))):
         ballo.location = BALL_PUTT if a is putt_action else BALL_IRON
         for f in frames:
             eval_frame(a, f)
             shoot(os.path.join(OUT_CHECK, f'{a.name}_{f:02d}_front.png'), (0, -4.2, 1.0), (0, 0, 0.9))
             shoot(os.path.join(OUT_CHECK, f'{a.name}_{f:02d}_side.png'), (-4.0, -0.5, 1.0), (0, -0.4, 0.85))
+    eval_frame(idle_action, 0)
+    shoot(os.path.join(OUT_CHECK, 'hands_side.png'), (-1.3, -0.35, 0.85), (0, -0.3, 0.8))
+    shoot(os.path.join(OUT_CHECK, 'hands_front.png'), (0.1, -1.6, 0.9), (0, -0.3, 0.8))
+    eval_frame(swing_action, 45)
+    shoot(os.path.join(OUT_CHECK, 'hands45_front.png'), (0.3, -2.2, 1.0), (0.3, -0.2, 0.9))
+    arm.animation_data.action = None
+    for tr_ in arm.animation_data.nla_tracks:
+        tr_.mute = True
+    bpy.ops.object.mode_set(mode='POSE')
+    reset_pose()
+    bpy.ops.object.mode_set(mode='OBJECT')
+    shoot(os.path.join(OUT_CHECK, 'face_front.png'), (0, -1.7, 1.66), (0, 0, 1.66))
+    shoot(os.path.join(OUT_CHECK, 'face_34.png'), (0.9, -1.4, 1.72), (0, -0.1, 1.66))
+    for tr_ in arm.animation_data.nla_tracks:
+        tr_.mute = False
     g.hide_render = True
     bpy.data.objects.remove(g); bpy.data.objects.remove(ballo); bpy.data.objects.remove(cam)
 
@@ -759,16 +764,25 @@ arm.animation_data.action = None
 scene.frame_set(0)
 bpy.ops.object.select_all(action='SELECT')
 bpy.ops.export_scene.gltf(
-    filepath=os.path.join(ASSETS, 'golfer.glb'),
+    filepath=os.path.join(ASSETS, f'golfer-{CH}.glb'),
     export_format='GLB',
     use_selection=True,
     export_animations=True,
     export_animation_mode='ACTIONS',
     export_force_sampling=True,
     export_frame_step=1,
-    export_texcoords=False,
+    export_texcoords=True,
     export_skins=True,
     export_all_influences=False,
     export_yup=True,
 )
-print('EXPORTED golfer.glb')
+
+# アプリが読み込む JS 版（ファイルをダブルクリックで開いても動くよう base64 で埋め込む）
+import base64
+with open(os.path.join(ASSETS, f'golfer-{CH}.glb'), 'rb') as f:
+    b64 = base64.b64encode(f.read()).decode('ascii')
+with open(os.path.join(ASSETS, f'golfer-{CH}-glb.js'), 'w', encoding='utf-8') as f:
+    f.write(f'/* 設定画から作ったゴルファー（{CH}）tools/blender_golfer.py */\n')
+    f.write('window.GOLFER_GLBS = window.GOLFER_GLBS || {};\n')
+    f.write(f'window.GOLFER_GLBS.{CH} = "' + b64 + '";\n')
+print(f'EXPORTED golfer-{CH}.glb / -glb.js')

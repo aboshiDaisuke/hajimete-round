@@ -1,0 +1,105 @@
+{
+ "name": "female",
+ "sheet": "tools/sheets/female.png",
+ "bg_dist": 16,
+ "shoulder_y": 235,
+ "front": {
+  "cx": 302
+ },
+ "side": {
+  "xref": 780
+ },
+ "back": {
+  "cx": 1243
+ },
+ "split_y": 548,
+ "arm_y": [
+  [
+   0.85,
+   0.05
+  ],
+  [
+   1.05,
+   0.04
+  ],
+  [
+   1.4,
+   0.005
+  ]
+ ],
+ "brim_rows": [
+  58,
+  96
+ ],
+ "brim_front_y": -0.14,
+ "neck_y": 195,
+ "sh_top_y": 205,
+ "armpit_y": 292,
+ "head_side_y": 0.02,
+ "joints_y": {
+  "pelvis": 480,
+  "spine": 410,
+  "chest": 320,
+  "neck": 205,
+  "head": 180,
+  "headtop": 8,
+  "shoulder": 235,
+  "elbow": 350,
+  "wrist": 450,
+  "hand": 495,
+  "hip": 480,
+  "knee": 682,
+  "ankle": 905,
+  "toe": 955
+ },
+ "shoulder_dx": 89,
+ "hip_dx": 62,
+ "knee_y": -0.03,
+ "toe_y": -0.19,
+ "eyes": [
+  [
+   267.5,
+   118
+  ],
+  [
+   324,
+   118
+  ]
+ ],
+ "mouth": [
+  300,
+  155
+ ],
+ "brim": {
+  "base_y": -0.105,
+  "base_z_px": 75,
+  "tip_y": -0.236,
+  "tip_z_px": 58,
+  "half_w_px": 62
+ },
+ "skin_px": [
+  335,
+  140
+ ],
+ "hand_rows": [
+  440,
+  545
+ ],
+ "hires_head": {
+  "file": "tools/sheets/head_female.png",
+  "eyes": [
+   [
+    481,
+    578
+   ],
+   [
+    752,
+    557
+   ]
+  ],
+  "mouth": [
+   634,
+   752
+  ]
+ }
+}

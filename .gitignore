@@ -2,3 +2,5 @@
 # 生成物（tools/ のスクリプトで作り直せる）
 dist/
 assets/render_*.png
+# 設定画から作る中間ファイル（python3 tools/sheet_model.py で作り直せる）
+tools/build/

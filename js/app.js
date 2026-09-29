@@ -27,7 +27,7 @@
     return {
       profile: { name: '', start: t, debut: addDays(t, 90), confirmed: false },
       done: {}, logs: [], checklist: {}, quizBest: null, puttBest: null, puttRounds: 0, tempoReps: 0, theme: 'system',
-      xp: 0, badges: {}, daily: { date: '', counts: {}, claimed: {} }, cosmetic: { ball: 'white', wear: 'pine' }, sound: true, bgm: true,
+      xp: 0, badges: {}, daily: { date: '', counts: {}, claimed: {} }, cosmetic: { ball: 'white', wear: 'pine', chara: 'female' }, sound: true, bgm: true,
       game: { roundBest: null, nearpinBest: null, driveBest: null, tutorialSeen: false, holes: 0 },
     };
   }
@@ -83,13 +83,16 @@
     { id: 'lime', name: 'ライム', color: '#a6e22e', lv: 8 }, { id: 'gold', name: 'ゴールド', color: '#d4a017', lv: 12 },
   ];
   const WEARS = [
-    { id: 'pine', name: 'パイン', color: '#0d4731', lv: 1 }, { id: 'white', name: 'ホワイト', color: '#eeeeea', lv: 1 },
+    { id: 'pine', name: 'いつもの服', color: '#8fc78d', lv: 1, original: true }, { id: 'white', name: 'ホワイト', color: '#eeeeea', lv: 1 },
     { id: 'navy', name: 'ネイビー', color: '#1f3a68', lv: 3 }, { id: 'red', name: 'レッド', color: '#c8322b', lv: 5 },
     { id: 'sky', name: 'スカイ', color: '#5fb2e6', lv: 7 }, { id: 'flag', name: 'フラッグ', color: '#f2b705', lv: 10 },
     { id: 'black', name: 'ブラック', color: '#1a1d1b', lv: 14 },
   ];
   const ballColor = () => (BALLS.find(b => b.id === S.cosmetic.ball) || BALLS[0]).color;
   const wearColor = () => (WEARS.find(b => b.id === S.cosmetic.wear) || WEARS[0]).color;
+  // 3Dキャラのシャツの色（「いつもの服」のときは設定画の色のまま = null）
+  const wearTint = () => { const w = WEARS.find(b => b.id === S.cosmetic.wear) || WEARS[0]; return w.original ? null : w.color; };
+  const charaId = () => (S.cosmetic.chara === 'male' ? 'male' : 'female');
   const BADGES = [
     { id: 'first-shot', name: 'はじめの一打', desc: 'ゲームで初めてショットした', kind: 'game' },
     { id: 'first-hole', name: 'ホールアウト', desc: '1ホールを最後までプレーした', kind: 'game' },
@@ -440,10 +443,19 @@
     return `<div class="xp"><div class="xp-row"><span class="num">Lv.<b>${L}</b></span><span class="xp-title">${esc(titleOf(L))}</span><span class="num xp-next">次まで ${b - S.xp} XP</span></div>
       <div class="progress xp-bar" role="progressbar" aria-label="次のレベルまで" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div></div>`;
   }
+  const CHARAS = [['female', '女性', 'ピンクのバイザーとグリーンのポロ'], ['male', '男性', 'オレンジのキャップとポロ']];
+  function charaPicker() {
+    return `<section class="chara-pick" aria-labelledby="cp-h">
+      <h2 id="cp-h">使うキャラクターを選ぶ</h2>
+      <div class="chara-opts" role="radiogroup" aria-label="使うキャラクター">${CHARAS.map(([id, nm, d]) => `<button class="chara-opt ${charaId() === id ? 'on' : ''}" role="radio" aria-checked="${charaId() === id}" data-chara="${id}">
+        <img src="assets/face-${id}.jpg" alt="" width="56" height="56"><span><b>${nm}</b><small>${d}</small></span>${charaId() === id ? `<i class="chara-check" aria-hidden="true">${icon('check')}</i>` : ''}</button>`).join('')}</div>
+      <p class="chara-hint">ここで選んだキャラが、ショートラウンドやニアピンなどのゲームに出てきます。</p>
+    </section>`;
+  }
   function playerCard() {
     const L = level(), sk = skillOf(L);
     return `<section class="player-card" aria-label="プレーヤー">
-      <div class="pc-avatar" style="--wear:${wearColor()};--ball:${ballColor()}" aria-hidden="true"><span class="pc-head"></span><span class="pc-body"></span><span class="pc-ball"></span></div>
+      <div class="pc-avatar" id="avatar-host" role="img" aria-label="ゴルファー（タップすると喜びます）" style="--wear:${wearColor()};--ball:${ballColor()}"><span class="pc-head"></span><span class="pc-body"></span><span class="pc-ball"></span></div>
       <div class="pc-main">${xpBar()}
         <div class="pc-stats"><span>パワー <b class="num">+${Math.round((sk.power - 1) * 100)}%</b></span><span>ミート <b class="num">${(sk.meet * 200).toFixed(1)}%</b></span><span>バッジ <b class="num">${Object.keys(S.badges).length}/${BADGES.length}</b></span></div>
       </div></section>`;
@@ -1076,6 +1088,7 @@
     ];
     return `<div class="page">
       ${playerCard()}
+      ${charaPicker()}
       <section class="section" aria-labelledby="gm">
         <div class="section-head"><h2 id="gm">ゲームモード</h2><span class="chip-row"><button class="more" data-action="bgm">BGM：${S.bgm !== false ? 'ON' : 'OFF'}</button><button class="more" data-action="sound">効果音：${S.sound ? 'ON' : 'OFF'}</button></span></div>
         <div class="mode-grid">${modes.map(([r, t, d, b, i, c]) => `<a class="mode" href="#${r}">
@@ -1107,7 +1120,7 @@
       mode,
       sound: () => S.sound !== false,
       bgm: () => S.bgm !== false,
-      ballColor, wearColor,
+      ballColor, wearColor, wearTint, character: charaId,
       skill: () => skillOf(level()),
       showTutorial: !S.game.tutorialSeen,
       onTutorialSeen: () => { S.game.tutorialSeen = true; save(); },
@@ -1128,6 +1141,7 @@
     }).join('');
     return `<div class="page">
       ${playerCard()}
+      ${charaPicker()}
       <div class="grid-2">
         <div class="section" style="gap:20px">
           ${missionsCard()}
@@ -1211,6 +1225,7 @@
   };
   function teardown() {
     if (window.GolfScene) window.GolfScene.unmount();
+    if (window.GolfAvatar) window.GolfAvatar.unmount();
     if (window.GolfPutting) window.GolfPutting.unmount();
     if (window.GolfTempo) window.GolfTempo.unmount();
     if (window.GolfGame) window.GolfGame.unmount();
@@ -1230,8 +1245,11 @@
       else window.GolfBGM.stop();
     }
     const main = $('#main');
+    main.classList.toggle('enter', !keepScroll);
     main.innerHTML = html;
     if (after) after();
+    const av = $('#avatar-host');
+    if (av && window.GolfAvatar) window.GolfAvatar.mount(av, { wear: wearTint(), ball: ballColor(), character: charaId() });
     if (!keepScroll) window.scrollTo(0, 0);
     document.title = route === 'home' ? 'はじめてのラウンド' : `${$('#appbar h1') ? $('#appbar h1').textContent : ''} ｜ はじめてのラウンド`;
   }
@@ -1243,7 +1261,7 @@
 
   /* ---------- イベント ---------- */
   document.addEventListener('click', (e) => {
-    const t = e.target.closest('[data-go],[data-back],[data-action],[data-cat],[data-hist],[data-answer],[data-tempo],[data-del],[data-hs],[data-theme-set],[data-cos]');
+    const t = e.target.closest('[data-go],[data-back],[data-action],[data-cat],[data-hist],[data-answer],[data-tempo],[data-del],[data-hs],[data-theme-set],[data-cos],[data-chara]');
     if (!t) return;
     if (t.dataset.go) { go(t.dataset.go); return; }
     if (t.dataset.back) { go(t.dataset.back); return; }
@@ -1256,6 +1274,7 @@
     if (t.dataset.hist) { histTag = t.dataset.hist; render(true); return; }
     if (t.dataset.tempo) { tempoPreset = t.dataset.tempo; $$('[data-tempo]').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.tempo === tempoPreset))); return; }
     if (t.dataset.hs) { window.GolfScene.select(t.dataset.hs); return; }
+    if (t.dataset.chara) { S.cosmetic.chara = t.dataset.chara; save(); render(true); return; }
     if (t.dataset.cos) {
       const [kind, id] = t.dataset.cos.split(':');
       const list = kind === 'ball' ? BALLS : WEARS;

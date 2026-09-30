@@ -30,6 +30,7 @@
       xp: 0, badges: {}, daily: { date: '', counts: {}, claimed: {} }, cosmetic: { ball: 'white', wear: 'pine', chara: 'female' }, sound: true, bgm: true, bgmVolume: 0.45,
       game: { roundBest: null, nearpinBest: null, driveBest: null, tutorialSeen: false, holes: 0, courseBest: {}, sel: { course: 'hills', weather: 'auto' } },
       rounds: [], activity: {}, pace: { ext: 0, dismiss: '' }, lastMode: '15',
+      practice: { active: null, last: null, reviews: {}, readiness: {}, visit: {} },
     };
   }
   function load() {
@@ -188,7 +189,7 @@
     save();
     if (xp > 0 && !silent) toast(`+${xp} XP ${reason || ''}`);
     const after = levelOf(S.xp);
-    if (after > before) levelUp(before, after);
+    if (after > before && route !== 'session') levelUp(before, after);
   }
   // 練習した日（カレンダー用）。メニュー・記録・テンポ・パター・ドリルなど、体を動かしたときに数える
   const PRACTICE_KEYS = ['task', 'log', 'tempo', 'putt', 'drill'];
@@ -428,12 +429,13 @@
   /* ---------- ルーティング ---------- */
   const TAB_OF = (r) => {
     if (r === 'home') return 'home';
-    if (r === 'plan' || r.startsWith('week-') || r === 'practice' || r.startsWith('drill-') || r === 'tempo') return 'practice';
+    if (['plan', 'practice', 'session', 'weekreview', 'readiness'].includes(r) || r.startsWith('week-') || r.startsWith('drill-') || r === 'tempo') return 'practice';
     if (r === 'play' || r === 'rounds' || r === 'putting' || r.startsWith('game-')) return 'play';
     if (r === 'my' || r === 'log' || r === 'settings') return 'my';
     return 'learn';
   };
   const PARENT = (r) => {
+    if (['session', 'weekreview', 'readiness'].includes(r)) return 'home';
     if (r.startsWith('week-')) return 'plan';
     if (r === 'plan' || r.startsWith('drill-') || r === 'tempo') return 'practice';
     if (r === 'rounds' || r === 'putting' || r.startsWith('game-')) return 'play';
@@ -442,6 +444,7 @@
     return null;
   };
   const TITLES = {
+    session: '今日の練習', weekreview: '今週の振り返り', readiness: 'デビューへの準備',
     plan: '12週プログラム', practice: '練習', learn: '学ぶ', log: '練習の記録', settings: '設定',
     play: 'プレー', rounds: 'ラウンドの記録', my: 'マイページ', 'game-round': 'ショートラウンド', 'game-nearpin': 'ニアピンチャレンジ', 'game-drive': 'ドラコンチャレンジ',
     tempo: 'テンポ練習', putting: 'パター距離感ゲーム', course: '3Dコース図鑑', history: 'ゴルフの歴史',
@@ -552,7 +555,7 @@
       <span class="check" aria-hidden="true">${icon('check')}</span>
       <span class="task-body"><span class="task-text">${esc(t.text)}</span>
       <span class="task-meta"><span class="tag ${t.where === '自宅' ? 'tag-sand' : ''}">${esc(t.where)}</span>${link}</span></span>
-    </label></li>`;
+    </label>${t.drill && t.where !== 'コース' && t.tool !== 'putting' && !t.check ? `<button class="task-start" data-practice="start" data-selected="${t.id}">案内に沿って練習する ${icon('arrow')}</button>` : ''}</li>`;
   }
 
   function progressBar(done, total) {
@@ -642,33 +645,13 @@
     </section>`;
   }
 
-  // 今日の時間に合わせたおすすめ（5分／15分／練習場）
-  const MODES = [['5', '5分だけ'], ['15', '15分'], ['range', '練習場に行く']];
-  function suggestion(mode) {
-    const n = curWeek();
-    const pool = weekOf(n).tasks.filter(t => !S.done[t.id]).concat(n > 1 ? weekOf(n - 1).tasks.filter(t => !S.done[t.id]) : []);
-    const seed = Math.floor(parse(today()) / 86400000);
-    if (mode === 'range') {
-      const t = pool.find(x => x.where === '練習場');
-      return t ? { href: taskHref(t), t: '今日の練習場メニュー', sub: t.text, note: '球数は半分でもOK。打ったら記録しよう' }
-        : { href: 'log', t: '練習場で好きに打とう', sub: '今週の練習場メニューはクリア済み', note: '打ったら記録しよう' };
-    }
-    if (mode === '15') {
-      const t = pool.find(x => ['自宅', 'どこでも', 'アプリ'].includes(x.where));
-      if (t) return { href: taskHref(t), t: '今日の15分練習', sub: t.text, note: '終わったらチェックを付けよう' };
-      const home = D.drills.filter(d => d.where !== '練習場');
-      const d = home[seed % home.length];
-      return { href: `drill-${d.id}`, t: '今日の15分練習', sub: `ドリル「${d.name}」`, note: `目安 ${d.time}` };
-    }
-    const quick = [
-      { href: 'tempo', t: '今日の5分練習', sub: 'テンポ素振りを10回', note: '音に合わせて振るだけ' },
-      { href: 'putting', t: '今日の5分練習', sub: 'パター距離感を1ラウンド', note: '5球だけの勝負' },
-      { href: 'drill-grip', t: '今日の5分練習', sub: 'グリップを作る→ほどくを10回', note: 'テレビを見ながらでもOK' },
-      { href: 'drill-stretch', t: '今日の5分練習', sub: 'ゴルフのストレッチ', note: '体をほぐすだけでも練習' },
-    ];
-    return quick[seed % quick.length];
-  }
   function modeNow() { const d = daily(); return d.mode || S.lastMode || '15'; }
+
+  const practice = window.GolfPractice.create({
+    data: D, state: () => S, save, esc, icon, illus, today, week: curWeek,
+    weekStart: () => weekStart(curWeek()), daysLeft: () => diffDays(today(), S.profile.debut),
+    mode: modeNow, character: charaId, go, render, gain, track, completeTask, checkBadges, toast,
+  });
 
   // 練習カレンダー（直近13週。1マス=1日、濃いほどたくさん）
   function practiceCalendar() {
@@ -728,83 +711,45 @@
 
   /* ---------- 画面: ホーム ---------- */
   let triviaIdx = null;
-  // 練習を記録した日が、今日（または昨日）から何日つながっているか
-  function logStreak() {
-    const days = new Set(S.logs.map(l => l.date));
-    let d = today();
-    if (!days.has(d)) d = addDays(d, -1);
-    let n = 0;
-    while (days.has(d)) { n++; d = addDays(d, -1); }
-    return n;
-  }
   function viewHome() {
-    const n = curWeek(), w = weekOf(n);
-    const L = level(), a = xpAt(L), b = xpAt(L + 1);
-    const pct = Math.round((S.xp - a) / (b - a) * 100);
-    const left = diffDays(today(), S.profile.debut);
-    const debut = left > 0 ? `デビューまで<b class="num">${left}</b>日` : left === 0 ? '今日がデビュー！' : `デビューから<b class="num">${-left}</b>日`;
-    const streak = logStreak();
-    const d = daily(), ms = todaysMissions();
-    const msDone = ms.filter(k => d.claimed[k]).length;
-    const name = S.profile.name ? `${esc(S.profile.name)}さん、` : '';
-    const pend = w.tasks.filter(t => !S.done[t.id]);
-    const okW = okCount(w);
-    const say = pend.length === 0 ? `${name}今週のメニュー、全部できたね！` : weekDone(n) >= okW ? `${name}今週の目安はクリア！あとはのんびりでOK` : msDone === ms.length ? `${name}今日のミッション、全部クリア！` : `${name}今日も少しだけ、いっしょに練習しよう`;
+    const n = curWeek(), w = weekOf(n), left = diffDays(today(), S.profile.debut);
+    const pend = w.tasks.filter(t => !S.done[t.id]), ok = okCount(w), wd = weekDone(n);
+    const say = pend.length === 0 ? '今週のメニュー、全部できたね！' : '今日も少しだけ、いっしょに練習しよう。';
     if (triviaIdx == null) triviaIdx = Math.floor(parse(today()) / 86400000) % D.trivia.length;
     const tv = D.trivia[triviaIdx];
-    const mode = modeNow();
-    const cta = suggestion(mode);
-    const ok = okCount(w), wd = weekDone(n);
-
-    const welcome = S.profile.confirmed ? '' : `<section class="card welcome" aria-labelledby="wl">
-      <div class="eyebrow">WELCOME</div><h2 id="wl">90日でコースデビューしよう</h2>
-      <p class="lead">練習開始日を ${fmtMD(S.profile.start)}、デビュー予定日を <strong>${fmtYMD(S.profile.debut)}</strong> にしています。</p>
-      <div class="btn-row"><button class="btn btn-primary" data-action="confirm">この日程ではじめる</button><button class="btn btn-ghost" data-go="settings">日程を変える</button></div>
-    </section>`;
-
-    return `
-    <section class="home-stage home-course-stage" aria-label="あなたのゴルファー">
-      <div class="home-course-caption"><span class="launch-kicker">YOUR DAILY CLUBHOUSE</span><h2>${S.profile.name ? `${esc(S.profile.name)}さん、おかえり。` : '今日も、ナイスな一日に。'}</h2></div>
-      <div class="home-lobby lobby-host" id="home-lobby" role="img" aria-label="選んだゴルファーと立体のゴルフコース。ドラッグで見渡せます。"><img class="lobby-poster" src="assets/lobby-poster.png" alt=""></div>
-      <div class="home-hud">
-        <a class="home-lv" href="#my" aria-label="レベル ${L}、${esc(titleOf(L))}。マイページを開く">
-          <span class="num home-lv-n">Lv.<b>${L}</b></span>
-          <span class="home-lv-t">${esc(titleOf(L))}</span>
-          <span class="home-xp" aria-hidden="true"><span style="width:${pct}%"></span></span>
-        </a>
-        <div class="home-chips"><span class="home-chip home-chip-debut">${debut}</span>${streak >= 2 ? `<span class="home-chip home-chip-hot">練習<b class="num">${streak}</b>日連続</span>` : ''}</div>
-      </div>
-      <p class="home-say">${say}</p>
-    </section>
-    <div class="page home-page">
-      <a class="go-cta" href="#${cta.href}"><span class="go-ic" aria-hidden="true">${icon('target')}</span>
-        <span class="go-t"><b>${cta.t}</b><small>${esc(cta.sub)}</small></span></a>
-      <div class="home-shortcuts" aria-label="クイックメニュー"><a href="#play">${icon('play')}<span>ラウンドで遊ぶ</span><span aria-hidden="true">↗</span></a><a href="#plan">${icon('flag')}<span>12週のマイコース</span><span aria-hidden="true">↗</span></a></div>
-      <div class="today-pick">
-        <span class="tp-l" id="tp-l">今日はどれくらい？</span>
-        <div class="seg" role="radiogroup" aria-labelledby="tp-l">${MODES.map(([k, l]) => `<button class="seg-b" role="radio" aria-checked="${mode === k}" data-mode="${k}">${l}</button>`).join('')}</div>
-        <p class="tp-note">${esc(cta.note)}</p>
-      </div>
-      ${welcome}
+    return `<div class="page home-training-page">
+      <section class="training-overview" aria-labelledby="training-greeting">
+        <div class="training-deadline"><span>${left > 0 ? 'コースデビューまで' : left === 0 ? 'いよいよ今日は' : 'デビューから'}</span>
+          <strong class="num">${left === 0 ? 'TODAY' : Math.abs(left)}${left === 0 ? '' : '<small>日</small>'}</strong><a href="#settings">${fmtMD(S.profile.debut)}予定 ${icon('gear')}</a></div>
+        <div><span class="eyebrow">3か月で、はじめてのコースへ</span><h2 id="training-greeting">${S.profile.name ? `${esc(S.profile.name)}さん、おかえり。` : '今日の一歩を、ここから。'}</h2>
+          <a class="training-week" href="#week-${n}"><span>WEEK ${n} / 12</span><b>${esc(w.title)}</b></a></div>
+      </section>
+      ${!S.profile.confirmed ? `<section class="card welcome"><h2>練習の日程を決めよう</h2><p class="goal">開始日 ${fmtMD(S.profile.start)} ・ デビュー予定 ${fmtMD(S.profile.debut)}</p><div class="btn-row"><button class="btn btn-primary" data-action="confirm">この日程ではじめる</button><button class="btn btn-ghost" data-go="settings">日程を変える</button></div></section>` : ''}
+      ${practice.dailyCard(modeNow())}
+      ${practice.prepCard()}
       ${paceCard()}
+      <section class="home-stage home-course-stage home-companion" aria-label="練習を応援するゴルファー">
+        <div class="home-course-caption"><span class="launch-kicker">YOUR PRACTICE PARTNER</span><h2>コースデビューまで、いっしょに。</h2></div>
+        <div class="home-lobby lobby-host" id="home-lobby" role="img" aria-label="選んだゴルファーと立体のゴルフコース。ドラッグで見渡せます。"><img class="lobby-poster" src="assets/lobby-poster.png" alt=""></div>
+        <p class="home-say">${say}</p>
+      </section>
       ${weekDots()}
       <section class="card week-card" aria-labelledby="tw">
-        <div class="top"><div class="hole-badge"><div><div class="l">HOLE</div><div class="n">${n}</div></div></div>
+        <div class="top"><div class="hole-badge"><div><div class="l">WEEK</div><div class="n">${n}</div></div></div>
           <div><div class="eyebrow">今週のテーマ ・ 目安 ${ok}つ</div><h3 id="tw">${esc(w.title)}</h3></div></div>
         ${progressBar(wd, w.tasks.length)}
-        <p class="ok-note ${wd >= ok ? 'is-ok' : ''}">${wd >= ok ? (pend.length ? `目安クリア！ 残り${pend.length}つは、できたらでOK` : '全部できました。ナイスラウンド！') : `あと${ok - wd}つで今週の目安。全部やらなくて大丈夫`}</p>
-        ${pend.length ? `<ul class="tasks">${pend.slice(0, 3).map(taskItem).join('')}</ul>` : ''}
-        <div class="btn-row"><button class="btn btn-pine" data-go="week-${n}">今週のメニューを全部見る</button><button class="btn btn-ghost" data-go="log">練習を記録</button></div>
+        <p class="goal">目標：${esc(w.goal)}</p>
+        <p class="ok-note ${wd >= ok ? 'is-ok' : ''}">${wd >= ok ? '今週の目安クリア。復習も自分のペースで。' : `あと${ok - wd}つで今週の目安。少しずつで大丈夫。`}</p>
+        <a class="btn btn-ghost btn-block" href="#week-${n}">今週のメニューを確認する</a>
       </section>
-      ${missionsCard()}
-      <a class="game-link" href="#play"><span class="game-link-ic" aria-hidden="true">${icon('play')}</span>
-        <span class="game-link-t"><b>ゲームで遊ぶ</b><small>ショートラウンドやニアピンで、練習の成果をためそう</small></span></a>
-      <section class="card trivia-card" aria-labelledby="tv">
-        <div class="eyebrow">今日のうんちく ・ ${esc(tv.tag)}</div>
-        <h3 id="tv">${esc(tv.title)}</h3>
-        <p>${esc(tv.body)}</p>
-        <button class="btn btn-ghost" data-action="next-trivia">次のうんちく</button>
-      </section>
+      ${practice.weeklyCard()}
+      ${practice.readinessCard()}
+      <div class="home-shortcuts"><a href="#plan">${icon('flag')}<span>12週プログラム</span><span aria-hidden="true">↗</span></a><a href="#log">${icon('chart')}<span>練習の記録</span><span aria-hidden="true">↗</span></a></div>
+      <details class="card home-extra"><summary>気分転換・ゴルフの読み物</summary><div class="section">
+        ${missionsCard()}
+        <a class="btn btn-ghost" href="#play">ゴルフゲームで遊ぶ</a>
+        <article class="trivia-card section"><span class="eyebrow">今日のうんちく ・ ${esc(tv.tag)}</span><h3>${esc(tv.title)}</h3><p>${esc(tv.body)}</p><button class="btn btn-ghost" data-action="next-trivia">次のうんちく</button></article>
+      </div></details>
     </div>`;
   }
 
@@ -824,7 +769,7 @@
         <div class="launch-picker" role="group" aria-label="使うキャラクター">${CHARAS.map(([id, name]) => `<button class="launch-character" data-launch-chara="${id}" aria-pressed="${charaId() === id}"><img src="assets/face-${id}.jpg" alt="" width="44" height="44"><span><b>${name}ゴルファー</b><small>${id === 'female' ? 'GREEN & PINK' : 'ORANGE & IVORY'}</small></span><i class="launch-check" aria-hidden="true">${icon('check')}</i></button>`).join('')}</div>
         <p class="launch-status" id="launch-status" role="status">コースを準備しています…</p>
         <button class="launch-start" data-action="launch-start"><span>${returning ? 'つづきからはじめる' : 'さあ、はじめよう'}</span>${icon('arrow')}</button>
-        <button class="launch-try" data-go="play">まずはゲームで遊んでみる <span aria-hidden="true">↗</span></button>
+        <button class="launch-try" data-go="practice">まずは練習内容を見てみる <span aria-hidden="true">↗</span></button>
         <div class="launch-footer"><span>12 WEEKS TO YOUR FIRST ROUND</span><button class="launch-music" data-action="music-preview"><span data-music-state>♪ タップしてBGMを聴く</span></button></div></div>
     </section>`;
   }
@@ -915,6 +860,7 @@
         <ul class="tasks">${w.tasks.map(taskItem).join('')}</ul>
       </section>
       <section class="point"><strong>コーチのひとこと</strong><p>${esc(w.point)}</p></section>
+      ${n === curWeek() ? practice.weeklyCard() : ''}
       ${n === curWeek() && n < TOTAL_WEEKS && diffDays(weekStart(n), today()) >= 2 ? `<section class="card section slow-card"><p class="goal">むずかしい週や忙しい週は、このテーマを今日からもう1週間つづけられます（デビュー予定もその分うしろにずれます）。</p>
         <button class="btn btn-ghost" data-action="slow" data-week="${n}">今日からもう1週間つづける</button></section>` : ''}
       <nav class="week-nav" aria-label="週の移動">
@@ -937,6 +883,7 @@
   function viewPractice() {
     const cats = ['すべて', ...Array.from(new Set(D.drills.map(d => d.cat)))];
     return `<div class="page">
+      ${practice.dailyCard(modeNow())}
       <a class="plan-link card" href="#plan"><span class="hole-badge"><span><span class="l">WEEK</span><span class="n">${curWeek()}</span></span></span>
         <span><span class="eyebrow">12週プログラム</span><br><strong>${esc(weekOf(curWeek()).title)}</strong><br><span class="goal">全体 ${allDone()}/${allTasks()} ・ プラン一覧を見る</span></span></a>
       <section class="section" aria-labelledby="pt">
@@ -971,7 +918,8 @@
       <section class="card section" aria-labelledby="st"><h2 id="st" style="font-size:18px;font-weight:900">やり方</h2><ol class="steps">${d.steps.map(s => `<li><span>${esc(s)}</span></li>`).join('')}</ol></section>
       <section class="point"><strong>ポイント</strong><p>${esc(d.point)}</p></section>
       ${d.ng && d.ng.length ? `<section class="card section" aria-labelledby="ng"><h2 id="ng" style="font-size:18px;font-weight:900">よくある失敗</h2><ul class="ng">${d.ng.map(s => `<li>${esc(s)}</li>`).join('')}</ul></section>` : ''}
-      ${d.tool ? `<a class="btn btn-primary btn-block" href="#${d.tool}">テンポ練習を開く</a>` : ''}
+      <button class="btn btn-primary btn-block" data-practice="start" data-selected="${d.id}">案内に沿って練習する</button>
+      ${d.tool ? `<a class="btn btn-ghost btn-block" href="#${d.tool}">テンポ練習を開く</a>` : ''}
       <button class="btn ${d.tool ? 'btn-ghost' : 'btn-primary'} btn-block" data-action="drill-done" data-drill="${d.id}">${(daily().counts['drill:' + d.id]) ? '今日はこのドリルをやった ✓' : 'このドリルをやった'}</button>
       ${usedIn.length ? `<section class="section"><div class="eyebrow">このドリルを使う週</div><div class="chip-row">${usedIn.map(w => `<button class="chip" data-go="week-${w.n}">WEEK ${w.n} ${esc(w.title)}</button>`).join('')}</div></section>` : ''}
     </div>`;
@@ -1215,6 +1163,7 @@
     const groups = Array.from(new Set(D.checklist.map(c => c.group)));
     return `<div class="page">
       <p class="lead">デビュー予定日：<strong>${fmtYMD(S.profile.debut)}</strong>。前日までに持ち物をそろえ、当日の流れをイメージしておきましょう。</p>
+      ${practice.visitForm()}
       <div class="grid-2">
         <section class="card section" aria-labelledby="ck">
           <div class="section-head"><h2 id="ck">持ち物チェック</h2></div>
@@ -1308,7 +1257,8 @@
               <div class="log-date"><b>${d.getDate()}</b><span>${d.getMonth() + 1}月 ${WD[d.getDay()]}</span></div>
               <div class="log-main"><span class="l1">${esc(l.place)} ・ ${esc(l.focus || '練習')}</span>
                 <span class="l2">${l.minutes ? `${l.minutes}分` : ''}${l.balls ? ` ・ ${l.balls}球` : ''}${l.score ? ` ・ スコア${esc(l.score)}` : ''} ・ 手ごたえ ${'●'.repeat(l.feel || 0)}${'○'.repeat(5 - (l.feel || 0))}</span>
-                ${l.memo ? `<span class="l2">${esc(l.memo)}</span>` : ''}</div>
+                ${l.memo ? `<span class="l2">${esc(l.memo)}</span>` : ''}
+                ${l.nextFocus ? `<span class="l2">次に意識：${esc(l.nextFocus)}</span>` : ''}</div>
               <button class="del" data-del="${l.id}" aria-label="${fmtMD(l.date)}の記録を削除">削除</button></li>`; }).join('')}</ul>`
               : '<p class="empty card">まだ記録がありません。練習したら「練習を記録する」から残しましょう。</p>'}
           </section>
@@ -1550,6 +1500,7 @@
   /* ---------- 描画 ---------- */
   const VIEWS = {
     title: [viewTitle, afterTitle], welcome: [viewWelcome, afterWelcome],
+    session: [practice.viewSession, practice.afterSession], weekreview: [practice.viewWeekly, practice.afterWeekly], readiness: [practice.viewReadiness],
     home: [viewHome, afterHome], plan: [viewPlan], practice: [viewPractice], tempo: [viewTempo, afterTempo],
     putting: [viewPutting, afterPutting], learn: [viewLearn], course: [viewCourse, afterCourse], history: [viewHistory],
     trivia: [viewTrivia], quiz: [viewQuiz], glossary: [viewGlossary], rules: [viewRules], debut: [viewDebut], clubs: [viewClubs],
@@ -1558,6 +1509,7 @@
     'game-round': [viewGame, afterGame], 'game-nearpin': [viewGame, afterGame], 'game-drive': [viewGame, afterGame],
   };
   function teardown() {
+    practice.pause();
     if (window.GolfLobby) window.GolfLobby.unmount();
     if (window.GolfScene) window.GolfScene.unmount();
     if (window.GolfAvatar) window.GolfAvatar.unmount();
@@ -1585,7 +1537,7 @@
     }
     const main = $('#main');
     main.classList.toggle('enter', !keepScroll);
-    main.innerHTML = html;
+    main.innerHTML = (!isTitle && !['home', 'session'].includes(route) ? practice.returnLink() : '') + html;
     syncMusicUI();
     if (after) after();
     const av = $('#avatar-host');
@@ -1602,8 +1554,9 @@
 
   /* ---------- イベント ---------- */
   document.addEventListener('click', (e) => {
-    const t = e.target.closest('[data-go],[data-back],[data-action],[data-cat],[data-hist],[data-answer],[data-tempo],[data-del],[data-hs],[data-theme-set],[data-cos],[data-chara],[data-course],[data-wx],[data-mode],[data-pace-ok],[data-launch-chara]');
+    const t = e.target.closest('[data-practice],[data-go],[data-back],[data-action],[data-cat],[data-hist],[data-answer],[data-tempo],[data-del],[data-hs],[data-theme-set],[data-cos],[data-chara],[data-course],[data-wx],[data-mode],[data-pace-ok],[data-launch-chara]');
     if (!t) return;
+    if (t.dataset.practice) { practice.action(t); return; }
     if (t.dataset.launchChara) { setLaunchCharacter(t.dataset.launchChara); return; }
     if (t.dataset.go) { go(t.dataset.go); return; }
     if (t.dataset.back) { go(t.dataset.back); return; }

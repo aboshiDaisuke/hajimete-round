@@ -30,7 +30,7 @@ faces = {}
 for ch in ('female', 'male'):
     with open(os.path.join(ROOT, 'assets', f'face-{ch}.jpg'), 'rb') as f:
         faces[ch] = 'data:image/jpeg;base64,' + base64.b64encode(f.read()).decode()
-for variable in ('id', 'charaId()'):
+for variable in ('id', 'charaId()', 'o.character()'):
     out = out.replace('assets/face-${' + variable + '}.jpg', '${' + repr(faces) + '[' + variable + ']}')
 # アーティファクトは doctype / html / head / body を自動で付けるので外す
 out = re.sub(r'<!DOCTYPE html>\s*|</?html[^>]*>\s*|</?head>\s*|</?body>\s*', '', out)

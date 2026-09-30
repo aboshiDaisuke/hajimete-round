@@ -4,11 +4,30 @@
 
 ## 開き方
 
-`index.html` をブラウザ（Chrome / Safari / Edge）で開くだけで動きます。
-3D表示に使う Three.js は CDN から読み込むので、インターネット接続が必要です。
+`index.html` をブラウザ（Chrome / Safari / Edge）で開くだけでも動きます。
+ファイルを直接開く場合、3D表示の Three.js は CDN から読み込むため通信が必要です。
+PC で開くと、スマホ幅のアプリ画面が中央に表示されます。
 
-スマホでは「ホーム画面に追加」（iPhone は Safari の共有ボタン、Android は Chrome のメニュー）をすると、
-アドレスバーのない全画面のアプリとして起動します。PC で開くと、スマホ幅のアプリ画面が中央に表示されます。
+### スマホでアプリとして使う（PWA）
+
+`index.html` と `css/`・`js/`・`assets/`・`vendor/`・`manifest.webmanifest`・`sw.js` を同じ構成のままHTTPSで配信します。
+ホームの「アプリとして使う」、または設定の同名カードから追加方法を確認できます。
+
+- iPhone / iPad：Safari の共有ボタン →「ホーム画面に追加」。表示される場合は「Webアプリとして開く」をONにして追加。
+- Android：対応ブラウザで設定の「ホーム画面に追加する」ボタン、またはブラウザのメニューから追加。
+- 追加したアイコンから起動すると、アドレスバーのないアプリ画面になります。ノッチやホームインジケーターの余白にも対応しています。
+
+初回に約12MBのアプリ本体を保存します。設定に「オフラインの準備ができました」と表示された後は、
+通信がなくても再起動・練習・記録・3D表示・ゲームを使えます。3Dのライブラリは `vendor/three/` に同梱しています（Three.js 0.170.0、MITライセンス）。
+外部フォントを読み込めない場合は端末の標準書体を使います。記録はこの端末内に保存し、他の端末との同期は行いません。
+
+更新は裏で一式を保存し終えてから、アプリの画面をすべて閉じて開き直すと反映されます。
+練習中に自動リロードしません。更新の取得に失敗した場合も、前の版と保存済みの記録を維持します。
+配信ファイルを変更した際は、公開前に `python3 tools/build_pwa.py` でオフライン保存一覧と版を更新してください。
+
+PWAの登録・インストールにはHTTPS（開発用は `http://localhost` / `http://127.0.0.1`）が必要です。
+`file://`、スマホからの通常のHTTP接続、単独HTMLの `dist/artifact.html` ではPWAとして登録しません。
+ローカル確認は `python3 -m http.server 8765 --bind 127.0.0.1` を実行し、`http://127.0.0.1:8765` を開きます。
 
 ## できること
 
@@ -90,10 +109,14 @@ CHARACTER=female blender -b -P tools/blender_golfer.py     # 骨・アニメー�
 ## ファイル構成
 
 ```
-index.html            画面の骨組み（Three.js は importmap で CDN から）
+index.html            画面の骨組み（配信時は同梱のThree.js、直接開く場合はCDN）
 css/style.css         デザイン（ライト／ダーク対応）
 js/data.js            コンテンツ（12週プログラム・ドリル・歴史・うんちく・クイズ・用語・ルール）
 js/app.js             画面の切り替え・保存・各画面の描画
+js/pwa.js             ホーム画面への追加案内・オフライン準備状況
+sw.js                 アプリ本体の保存・オフライン配信・更新
+manifest.webmanifest  アプリ名・アイコン・起動方法
+vendor/three/         配信版の3Dライブラリ（MIT、0.170.0）
 js/practice-flow.js   練習の案内・途中保存・振り返り・準備の自己確認
 js/scene3d.js         3Dコース（地形・芝・池・木・旗・解説ポイント）
 js/lobby3d.js         起動・ホームの3Dジオラマ、キャラ選択・あいさつ・カメラ操作
@@ -110,6 +133,7 @@ tools/blender_lobby.py   起動コースと読み込み中の静止画を作る 
 tools/face_states.py    表情の絵（目・口）を作る
 tools/blender_golfer.py  ゴルファーを作る Blender スクリプト（-- check でポーズ確認画像も）
 tools/build_artifact.py  1枚のHTMLにまとめる（公開用 → dist/artifact.html）
+tools/build_pwa.py       オフライン保存一覧・配信バージョンの更新
 ```
 
 ## 素材を作り直す
@@ -146,3 +170,10 @@ GOLF_URL=http://127.0.0.1:8765 node tools/test_practice.cjs
 ```
 
 既存の保存データの引き継ぎ、練習の中断と再開、振り返りの下書き、明示的な達成チェック、見送り、復習候補、12週と3つの時間・場所の組み合わせ、当日の予定、スマホ幅での表示を確認します。Chromium の場所を指定する場合は `GOLF_BROWSER_PATH`、画面画像を保存する場合は `GOLF_SCREENSHOT_DIR` を設定できます。テストは専用のブラウザプロファイルを使い、普段の記録は変更しません。
+
+### PWAの確認
+
+Playwright と Chromium を用意し、`node tools/test_pwa.cjs` を実行します。
+専用サーバーを自動で立ち上げ、ホーム画面への追加案内、320px幅、通信を切った後の起動・3D・ゲーム・練習再開、
+更新待ち中のデータ保持、更新失敗時の復旧、サブディレクトリ配信を確認します。
+`GOLF_BROWSER_PATH` と `GOLF_SCREENSHOT_DIR` も使用できます。OSの実際の追加操作は実機で確認してください。

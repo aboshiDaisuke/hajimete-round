@@ -69,6 +69,9 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+@media (display-mode: standalone) {
+  html { overscroll-behavior-y: none; }
+}
 body {
   margin: 0;
   background: var(--bg);
@@ -83,6 +86,7 @@ img { max-width: 100%; }
 [hidden] { display: none !important; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
+button, a, summary { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 a { color: var(--grass-text); }
 :focus-visible { outline: 3px solid var(--flag); outline-offset: 2px; border-radius: 6px; }
 h1, h2, h3 { text-wrap: balance; word-break: auto-phrase; line-height: 1.35; margin: 0; }
@@ -146,6 +150,15 @@ main { display: block; }
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 18px; box-shadow: var(--shadow);
 }
+.pwa-heading { display: flex; align-items: center; gap: 12px; }
+.pwa-heading img { width: 48px; height: 48px; border-radius: 12px; flex-shrink: 0; }
+.pwa-heading h2 { font-size: 18px; }
+.pwa-heading p, .pwa-status, .pwa-help { font-size: 14px; color: var(--ink-2); }
+.pwa-help summary { cursor: pointer; font-weight: 700; min-height: 44px; display: flex; align-items: center; }
+.pwa-help summary::after { content: '＋'; margin-left: auto; padding-left: 8px; }
+.pwa-help[open] summary::after { content: '−'; }
+.pwa-help ol { margin: 8px 0; padding-left: 24px; }
+.pwa-status { padding: 12px; background: var(--surface-2); border-radius: 12px; }
 .grid-2 { display: grid; gap: 20px; }
 
 /* ---------- ボタン ---------- */

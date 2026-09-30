@@ -15,10 +15,12 @@ def inline_js(m):
     return '<script>\n' + js + '\n</script>'
 
 out = re.sub(r'<link rel="stylesheet" href="(css/[^"]+)">', inline_css, src)
+# 単独HTMLはPWAの配信一式ではないため、登録せずCDN版の3Dを使う。
+out = out.replace('<script src="js/data.js">', '<script>window.GOLF_ARTIFACT = true;</script>\n<script src="js/data.js">')
 out = re.sub(r'<script src="([^"]+)"></script>', inline_js, out)
 # ゴルファーのモデル（男女）は、通常は選ばれたほうだけ後から読み込む。1枚にまとめるときは両方を埋め込む
 models = ''.join('<script>\n' + open(os.path.join(ROOT, 'assets', f'golfer-{ch}-{kind}.js'), encoding='utf-8').read() + '\n</script>\n' for ch in ('female', 'male') for kind in ('face', 'glb'))
-out = out.replace('<script type="importmap">', models + '<script type="importmap">')
+out = out.replace('<!-- Three.js：', models + '<!-- Three.js：')
 # 起動時の静止画も含め、単独HTMLで表示できるようローカル画像を埋め込む。
 for name in ('lobby-poster.png', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'hero.jpg', 'face-female.jpg', 'face-male.jpg'):
     mime = 'image/png' if name.endswith('.png') else 'image/jpeg'

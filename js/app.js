@@ -745,6 +745,7 @@
       ${practice.weeklyCard()}
       ${practice.readinessCard()}
       <div class="home-shortcuts"><a href="#plan">${icon('flag')}<span>12週プログラム</span><span aria-hidden="true">↗</span></a><a href="#log">${icon('chart')}<span>練習の記録</span><span aria-hidden="true">↗</span></a></div>
+      ${window.GolfPWA ? window.GolfPWA.homeCard() : ''}
       <details class="card home-extra"><summary>気分転換・ゴルフの読み物</summary><div class="section">
         ${missionsCard()}
         <a class="btn btn-ghost" href="#play">ゴルフゲームで遊ぶ</a>
@@ -1456,6 +1457,7 @@
   let confirmReset = false;
   function viewSettings() {
     return `<div class="page page-narrow">
+      ${window.GolfPWA ? window.GolfPWA.settingsCard() : ''}
       <section class="card">
         <form class="form" id="set-form">
           <h2 style="font-size:18px;font-weight:900">プロフィールと日程</h2>
@@ -1538,6 +1540,7 @@
     const main = $('#main');
     main.classList.toggle('enter', !keepScroll);
     main.innerHTML = (!isTitle && !['home', 'session'].includes(route) ? practice.returnLink() : '') + html;
+    if (window.GolfPWA) window.GolfPWA.sync();
     syncMusicUI();
     if (after) after();
     const av = $('#avatar-host');

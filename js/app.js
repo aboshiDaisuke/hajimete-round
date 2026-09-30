@@ -27,7 +27,7 @@
     return {
       profile: { name: '', start: t, debut: addDays(t, 90), confirmed: false },
       done: {}, logs: [], checklist: {}, quizBest: null, puttBest: null, puttRounds: 0, tempoReps: 0, theme: 'system',
-      xp: 0, badges: {}, daily: { date: '', counts: {}, claimed: {} }, cosmetic: { ball: 'white', wear: 'pine', chara: 'female' }, sound: true, bgm: true,
+      xp: 0, badges: {}, daily: { date: '', counts: {}, claimed: {} }, cosmetic: { ball: 'white', wear: 'pine', chara: 'female' }, sound: true, bgm: true, bgmVolume: 0.45,
       game: { roundBest: null, nearpinBest: null, driveBest: null, tutorialSeen: false, holes: 0, courseBest: {}, sel: { course: 'hills', weather: 'auto' } },
       rounds: [], activity: {}, pace: { ext: 0, dismiss: '' }, lastMode: '15',
     };
@@ -54,6 +54,25 @@
     else r.removeAttribute('data-theme');
   }
   applyTheme();
+  const musicVolume = () => Number.isFinite(Number(S.bgmVolume)) ? Math.max(0, Math.min(1, Number(S.bgmVolume))) : 0.45;
+  function musicForRoute() {
+    if (route === 'tempo') return null;
+    if (route === 'title' || route === 'welcome') return 'title';
+    if (route === 'game-nearpin' || route === 'game-drive') return 'challenge';
+    if (route.startsWith('game-')) return 'course';
+    if (route === 'putting') return 'putt';
+    return 'menu';
+  }
+  function syncMusicUI() {
+    const music = window.GolfBGM;
+    if (!music) return;
+    const messages = { muted: '♪ BGM OFF', quiet: '♪ 音量 0%', waiting: '♪ タップしてBGMを聴く', paused: '♪ おやすみ中', off: '♪ BGMはおやすみ中', unavailable: '♪ この端末では音を再生できません' };
+    const text = messages[music.status] || `♪ ${music.track ? music.track.title : 'ゴルフ・サウンドトラック'}`;
+    $$('[data-music-state]').forEach(el => { el.textContent = text; });
+    const value = Math.round(musicVolume() * 100);
+    $$('[data-music-volume-label]').forEach(el => { el.textContent = value + '%'; });
+  }
+  window.addEventListener('golf-bgm-change', syncMusicUI);
 
   /* ---------- プログラム ---------- */
   const TOTAL_WEEKS = D.weeks.length;
@@ -299,6 +318,9 @@
 
   /* ---------- アイコン ---------- */
   const P = {
+    arrow: '<path d="M4 12h15M13 6l6 6-6 6"/>',
+    sound: '<path d="M11 4L6 8H3v8h3l5 4z"/><path d="M15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/>',
+    mute: '<path d="M11 4L6 8H3v8h3l5 4z"/><path d="M16 9l6 6M22 9l-6 6"/>',
     home: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
     flag: '<path d="M5 21V4"/><path d="M5 4h12l-2.5 4L17 12H5"/>',
     target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
@@ -432,7 +454,7 @@
   }
   function currentRoute() {
     const h = (location.hash || '').replace(/^#/, '');
-    return h || 'home';
+    return h || 'title';
   }
 
   /* ---------- 共通パーツ ---------- */
@@ -443,6 +465,7 @@
       bar.innerHTML = `<div class="appbar-inner">
         <div class="brand"><img src="assets/icon-192.png" alt="" width="32" height="32">
           <div><div class="brand-name">はじめてのラウンド</div></div></div>
+        <button class="icon-btn" data-go="title" aria-label="タイトル画面">${icon('flag')}</button>
         <button class="icon-btn" data-go="settings" aria-label="設定">${icon('gear')}</button></div>`;
       return;
     }
@@ -740,8 +763,9 @@
     </section>`;
 
     return `
-    <section class="home-stage" aria-label="あなたのゴルファー">
-      <div class="home-avatar" id="avatar-host" role="img" aria-label="ゴルファー（タップすると喜びます）"></div>
+    <section class="home-stage home-course-stage" aria-label="あなたのゴルファー">
+      <div class="home-course-caption"><span class="launch-kicker">YOUR DAILY CLUBHOUSE</span><h2>${S.profile.name ? `${esc(S.profile.name)}さん、おかえり。` : '今日も、ナイスな一日に。'}</h2></div>
+      <div class="home-lobby lobby-host" id="home-lobby" role="img" aria-label="選んだゴルファーと立体のゴルフコース。ドラッグで見渡せます。"><img class="lobby-poster" src="assets/lobby-poster.png" alt=""></div>
       <div class="home-hud">
         <a class="home-lv" href="#my" aria-label="レベル ${L}、${esc(titleOf(L))}。マイページを開く">
           <span class="num home-lv-n">Lv.<b>${L}</b></span>
@@ -755,6 +779,7 @@
     <div class="page home-page">
       <a class="go-cta" href="#${cta.href}"><span class="go-ic" aria-hidden="true">${icon('target')}</span>
         <span class="go-t"><b>${cta.t}</b><small>${esc(cta.sub)}</small></span></a>
+      <div class="home-shortcuts" aria-label="クイックメニュー"><a href="#play">${icon('play')}<span>ラウンドで遊ぶ</span><span aria-hidden="true">↗</span></a><a href="#plan">${icon('flag')}<span>12週のマイコース</span><span aria-hidden="true">↗</span></a></div>
       <div class="today-pick">
         <span class="tp-l" id="tp-l">今日はどれくらい？</span>
         <div class="seg" role="radiogroup" aria-labelledby="tp-l">${MODES.map(([k, l]) => `<button class="seg-b" role="radio" aria-checked="${mode === k}" data-mode="${k}">${l}</button>`).join('')}</div>
@@ -781,6 +806,74 @@
         <button class="btn btn-ghost" data-action="next-trivia">次のうんちく</button>
       </section>
     </div>`;
+  }
+
+  /* ---------- 起動・はじめての設定 ---------- */
+  function viewTitle() {
+    const returning = S.profile.confirmed || S.xp > 0 || S.logs.length > 0;
+    return `<section class="launch-screen" aria-labelledby="launch-title">
+      <div class="launch-top"><span class="launch-wordmark">FIRST ROUND <i>GOLF CLUB</i></span>
+        <button class="launch-sound" data-action="launch-sound" aria-label="BGM ${S.bgm !== false ? 'オフにする' : 'オンにする'}" aria-pressed="${S.bgm !== false}">${icon(S.bgm !== false ? 'sound' : 'mute')}</button></div>
+      <div class="launch-heading"><span class="launch-kicker"><i></i> YOUR FIRST TEE STARTS HERE</span>
+        <h1 id="launch-title">はじめての<br><span>ラウンド<span class="launch-period">.</span></span></h1>
+        <p>小さな一打から、はじまる毎日。</p></div>
+      <div class="launch-world-wrap"><div class="launch-world lobby-host" id="lobby-host" role="img" aria-label="男女のゴルファーが迎える立体のゴルフコース。左右にドラッグして見渡せます。"><img class="lobby-poster" src="assets/lobby-poster.png" alt="" fetchpriority="high"></div>
+        <span class="launch-course-label"><i></i> GREEN HILLS <small>PAR 4 · HOLE 01</small></span>
+        <span class="launch-stamp">LET'S<br><b>GOLF!</b></span></div>
+      <div class="launch-bottom"><div class="launch-pick-head"><span>あなたのゴルファー</span><span class="num" id="launch-pick-index">${charaId() === 'female' ? '01' : '02'} / 02</span></div>
+        <div class="launch-picker" role="group" aria-label="使うキャラクター">${CHARAS.map(([id, name]) => `<button class="launch-character" data-launch-chara="${id}" aria-pressed="${charaId() === id}"><img src="assets/face-${id}.jpg" alt="" width="44" height="44"><span><b>${name}ゴルファー</b><small>${id === 'female' ? 'GREEN & PINK' : 'ORANGE & IVORY'}</small></span><i class="launch-check" aria-hidden="true">${icon('check')}</i></button>`).join('')}</div>
+        <p class="launch-status" id="launch-status" role="status">コースを準備しています…</p>
+        <button class="launch-start" data-action="launch-start"><span>${returning ? 'つづきからはじめる' : 'さあ、はじめよう'}</span>${icon('arrow')}</button>
+        <button class="launch-try" data-go="play">まずはゲームで遊んでみる <span aria-hidden="true">↗</span></button>
+        <div class="launch-footer"><span>12 WEEKS TO YOUR FIRST ROUND</span><button class="launch-music" data-action="music-preview"><span data-music-state>♪ タップしてBGMを聴く</span></button></div></div>
+    </section>`;
+  }
+  function setLaunchCharacter(ch) {
+    if (!['female', 'male'].includes(ch)) return;
+    S.cosmetic.chara = ch; save();
+    $$('[data-launch-chara]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.launchChara === ch)));
+    const index = $('#launch-pick-index'); if (index) index.textContent = `${ch === 'female' ? '01' : '02'} / 02`;
+    if (window.GolfLobby) window.GolfLobby.select(ch);
+  }
+  function afterTitle() {
+    if (window.GolfLobby) window.GolfLobby.mount($('#lobby-host'), {
+      pair: true, character: charaId(), onSelect: setLaunchCharacter,
+      onStatus: text => { const el = $('#launch-status'); if (el) el.textContent = text; },
+    });
+  }
+  function viewWelcome() {
+    return `<section class="setup-screen" aria-labelledby="setup-title">
+      <button class="setup-back" data-go="title">${icon('back')} タイトルへ</button>
+      <div class="setup-steps" aria-label="最後の準備"><span></span><span></span><span class="active"></span></div>
+      <div class="launch-kicker">LET'S GET YOU READY</div><h1 id="setup-title">あなたの<br>はじめの一歩。</h1>
+      <p class="setup-lead">目標は、90日後のコースデビュー。<br>まずは、あなたのペースを決めよう。</p>
+      <div class="setup-golfer"><img src="assets/face-${charaId()}.jpg" alt="選んだゴルファー" width="60" height="60"><span><b>いっしょに練習しよう！</b><small>キャラクターも日程も、あとで変更できます。</small></span></div>
+      <form class="form" id="welcome-form">
+        <div class="field"><label for="welcome-name">ニックネーム <span>任意</span></label><input id="welcome-name" type="text" maxlength="20" autocomplete="nickname" placeholder="なんて呼べばいい？" value="${esc(S.profile.name)}"></div>
+        <div class="field"><label for="welcome-start">練習をはじめる日</label><input id="welcome-start" type="date" required value="${S.profile.start}"></div>
+        <div class="field"><label for="welcome-debut">コースデビューの目標日</label><input id="welcome-debut" type="date" required min="${S.profile.start}" value="${S.profile.debut}"></div>
+        <p class="setup-note">1日5分からで大丈夫。<br>12週間の練習メニューを用意しています。</p>
+        <button class="launch-start" type="submit"><span>マイコースへ進む</span>${icon('arrow')}</button>
+      </form>
+    </section>`;
+  }
+  function afterWelcome() {
+    const form = $('#welcome-form'), start = $('#welcome-start'), debut = $('#welcome-debut');
+    start.addEventListener('change', () => {
+      if (!start.value) return;
+      debut.min = start.value; debut.value = addDays(start.value, 90); debut.setCustomValidity('');
+    });
+    debut.addEventListener('input', () => debut.setCustomValidity(''));
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      if (!start.value || !debut.value) return;
+      if (diffDays(start.value, debut.value) < 0) { debut.setCustomValidity('目標日は練習開始日以降にしてください'); debut.reportValidity(); return; }
+      Object.assign(S.profile, { name: $('#welcome-name').value.trim(), start: start.value, debut: debut.value, confirmed: true });
+      save(); go('home');
+    });
+  }
+  function afterHome() {
+    if (window.GolfLobby) window.GolfLobby.mount($('#home-lobby'), { character: charaId(), wear: wearTint() });
   }
 
   /* ---------- 画面: プラン ---------- */
@@ -1426,8 +1519,10 @@
         </form>
       </section>
       <section class="card section">
-        <h2 style="font-size:18px;font-weight:900">表示</h2>
+        <h2 style="font-size:18px;font-weight:900">サウンドと表示</h2>
         <div class="chip-row" role="group" aria-label="BGM"><button class="chip" data-action="bgm" aria-pressed="${S.bgm !== false}">BGM ${S.bgm !== false ? 'ON' : 'OFF'}</button><button class="chip" data-action="sound" aria-pressed="${!!S.sound}">効果音 ${S.sound ? 'ON' : 'OFF'}</button></div>
+        <div class="music-volume"><label for="music-volume">BGMの音量</label><output for="music-volume" data-music-volume-label>${Math.round(musicVolume() * 100)}%</output><input id="music-volume" type="range" min="0" max="100" step="1" value="${Math.round(musicVolume() * 100)}" aria-label="BGMの音量"></div>
+        <p class="music-now" data-music-state role="status"></p><p class="goal">ゴルフに似合う、6つのオリジナルBGM。画面をタップすると音楽が始まります。</p>
         <div class="chip-row" role="group" aria-label="テーマ">${[['system', '端末に合わせる'], ['light', 'ライト'], ['dark', 'ダーク']].map(([k, l]) => `<button class="chip" data-theme-set="${k}" aria-pressed="${S.theme === k}">${l}</button>`).join('')}</div>
       </section>
       <section class="card section">
@@ -1454,7 +1549,8 @@
 
   /* ---------- 描画 ---------- */
   const VIEWS = {
-    home: [viewHome], plan: [viewPlan], practice: [viewPractice], tempo: [viewTempo, afterTempo],
+    title: [viewTitle, afterTitle], welcome: [viewWelcome, afterWelcome],
+    home: [viewHome, afterHome], plan: [viewPlan], practice: [viewPractice], tempo: [viewTempo, afterTempo],
     putting: [viewPutting, afterPutting], learn: [viewLearn], course: [viewCourse, afterCourse], history: [viewHistory],
     trivia: [viewTrivia], quiz: [viewQuiz], glossary: [viewGlossary], rules: [viewRules], debut: [viewDebut], clubs: [viewClubs],
     log: [viewLog, afterLog], settings: [viewSettings, afterSettings],
@@ -1462,6 +1558,7 @@
     'game-round': [viewGame, afterGame], 'game-nearpin': [viewGame, afterGame], 'game-drive': [viewGame, afterGame],
   };
   function teardown() {
+    if (window.GolfLobby) window.GolfLobby.unmount();
     if (window.GolfScene) window.GolfScene.unmount();
     if (window.GolfAvatar) window.GolfAvatar.unmount();
     if (window.GolfPutting) window.GolfPutting.unmount();
@@ -1475,23 +1572,27 @@
     if (r.startsWith('week-')) html = viewWeek(Number(r.slice(5)));
     else if (r.startsWith('drill-')) html = viewDrill(r.slice(6));
     else { const v = VIEWS[r] || VIEWS.home; if (!VIEWS[r]) route = 'home'; html = v[0](); after = v[1]; }
+    const isTitle = route === 'title' || route === 'welcome';
+    document.body.classList.toggle('in-title', isTitle);
+    $$('meta[name="theme-color"]').forEach(meta => meta.setAttribute('content', isTitle ? '#f4f6e9' : getComputedStyle(document.documentElement).getPropertyValue('--pine').trim()));
+    $('#appbar').hidden = $('#tabbar').hidden = isTitle;
     appbar(); tabbar();
     if (window.GolfBGM) {
       window.GolfBGM.setEnabled(S.bgm !== false);
-      if (route === 'game-nearpin' || route === 'game-drive') window.GolfBGM.play('challenge');
-      else if (route.startsWith('game-')) window.GolfBGM.play('course');
-      else if (route === 'putting') window.GolfBGM.play('putt');
-      else if (route === 'play') window.GolfBGM.play('menu');
-      else window.GolfBGM.stop();
+      window.GolfBGM.setVolume(musicVolume());
+      const track = musicForRoute();
+      if (track) window.GolfBGM.play(track); else window.GolfBGM.stop();
     }
     const main = $('#main');
     main.classList.toggle('enter', !keepScroll);
     main.innerHTML = html;
+    syncMusicUI();
     if (after) after();
     const av = $('#avatar-host');
     if (av && window.GolfAvatar) window.GolfAvatar.mount(av, { wear: wearTint(), ball: ballColor(), character: charaId() });
     if (!keepScroll) window.scrollTo(0, 0);
     document.title = route === 'home' ? 'はじめてのラウンド' : `${$('#appbar h1') ? $('#appbar h1').textContent : ''} ｜ はじめてのラウンド`;
+    if (isTitle) document.title = 'はじめてのラウンド';
   }
   function onRoute() {
     route = currentRoute();
@@ -1501,8 +1602,9 @@
 
   /* ---------- イベント ---------- */
   document.addEventListener('click', (e) => {
-    const t = e.target.closest('[data-go],[data-back],[data-action],[data-cat],[data-hist],[data-answer],[data-tempo],[data-del],[data-hs],[data-theme-set],[data-cos],[data-chara],[data-course],[data-wx],[data-mode],[data-pace-ok]');
+    const t = e.target.closest('[data-go],[data-back],[data-action],[data-cat],[data-hist],[data-answer],[data-tempo],[data-del],[data-hs],[data-theme-set],[data-cos],[data-chara],[data-course],[data-wx],[data-mode],[data-pace-ok],[data-launch-chara]');
     if (!t) return;
+    if (t.dataset.launchChara) { setLaunchCharacter(t.dataset.launchChara); return; }
     if (t.dataset.go) { go(t.dataset.go); return; }
     if (t.dataset.back) { go(t.dataset.back); return; }
     if (t.dataset.cat) {
@@ -1541,6 +1643,19 @@
       return;
     }
     switch (t.dataset.action) {
+      case 'launch-start': go(S.profile.confirmed || S.xp > 0 || S.logs.length > 0 ? 'home' : 'welcome'); break;
+      case 'launch-sound':
+        S.bgm = S.bgm === false; save();
+        if (window.GolfBGM) { window.GolfBGM.setEnabled(S.bgm); if (S.bgm) window.GolfBGM.play(musicForRoute()); }
+        t.setAttribute('aria-pressed', String(S.bgm));
+        t.setAttribute('aria-label', `BGM ${S.bgm ? 'オフにする' : 'オンにする'}`);
+        t.innerHTML = icon(S.bgm ? 'sound' : 'mute'); break;
+      case 'music-preview':
+        S.bgm = true; if (musicVolume() === 0) S.bgmVolume = 0.45; save();
+        if (window.GolfBGM) { window.GolfBGM.setEnabled(true); window.GolfBGM.setVolume(musicVolume()); window.GolfBGM.play(musicForRoute()); window.GolfBGM.unlock(); }
+        const speaker = $('.launch-sound');
+        if (speaker) { speaker.setAttribute('aria-pressed', 'true'); speaker.setAttribute('aria-label', 'BGM オフにする'); speaker.innerHTML = icon('sound'); }
+        break;
       case 'slow': slowDown(Number(t.dataset.week) || curWeek()); render(true); break;
       case 'drill-done': {
         const key = 'drill:' + t.dataset.drill, dd = daily();
@@ -1572,7 +1687,7 @@
       case 'reset': confirmReset = true; render(true); break;
       case 'reset-no': confirmReset = false; render(true); break;
       case 'reset-yes':
-        confirmReset = false; S = defaults(); save(); applyTheme(); toast('データを消去しました'); go('home'); break;
+        confirmReset = false; S = defaults(); save(); applyTheme(); toast('データを消去しました'); go('title'); break;
     }
   });
 
@@ -1600,6 +1715,7 @@
   });
 
   document.addEventListener('input', (e) => {
+    if (e.target.id === 'music-volume') { S.bgmVolume = Number(e.target.value) / 100; save(); if (window.GolfBGM) window.GolfBGM.setVolume(musicVolume()); syncMusicUI(); }
     if (e.target.id === 'gl-q') $('#gl-list').innerHTML = glossList(e.target.value);
   });
 

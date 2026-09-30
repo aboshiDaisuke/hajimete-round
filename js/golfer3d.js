@@ -73,9 +73,11 @@
     // 表情：目・口のところだけ、描き替えた絵（tools/face_states.py）に差し替える
     const FACE = W.GOLFER_FACES && W.GOLFER_FACES[ch];
     const eyeU = { uEye: { value: null }, uRect: { value: new THREE.Vector4(...(FACE ? FACE.rect : [0, 0, 1, 1])) }, uState: { value: 0 }, uMix: { value: 0 } };
+    let faceImage = null, disposed = false;
     if (FACE) {
-      const img = new Image();
+      const img = faceImage = new Image();
       img.onload = () => {
+        if (disposed) return;
         const t = new THREE.Texture(img);
         t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true;
         eyeU.uEye.value = t; eyeU.ready = true;
@@ -185,6 +187,13 @@
 
     const api = {
       root, model: true, scale: SCALE, parts, character: ch, setFace(n) { expr = ''; face(n); },
+      dispose() {
+        disposed = true;
+        mixer.stopAllAction(); mixer.uncacheRoot(model);
+        if (eyeU.uEye.value) { eyeU.uEye.value.dispose(); eyeU.uEye.value = null; }
+        eyeU.ready = false;
+        if (faceImage) faceImage.onload = null;
+      },
       refreshFace() { const e = expr; expr = ''; face(e); },
       get mode() { return mode; },
       setClub(k) {

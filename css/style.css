@@ -981,3 +981,117 @@ main.enter > * { animation: view-in .3s cubic-bezier(.2, .8, .2, 1) both; }
 .totals b { font-size: 24px; font-weight: 700; line-height: 1.1; }
 .totals span { font-size: 12px; color: var(--ink-2); font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .seg-b { transition: none; } }
+
+/* ---------- 起動：小さなゴルフクラブへ ---------- */
+body.in-title { padding-bottom: 0; background: #f4f6e9; color: #163c2d; color-scheme: light; }
+body.in-title .appbar, body.in-title .tabbar { display: none; }
+.launch-screen {
+  position: relative; min-height: 100svh; padding: max(20px, env(safe-area-inset-top)) 24px max(20px, env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; overflow: hidden; isolation: isolate;
+  background: radial-gradient(ellipse at 80% 34%, #e0edce 0, transparent 48%), #f4f6e9;
+}
+.launch-screen::before {
+  content: ''; position: absolute; inset: 0; opacity: .19; pointer-events: none; z-index: -1;
+  background-image: url("data:image/svg+xml,%3Csvg width='120' height='120' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Cpath fill='%23000' opacity='.18' filter='url(%23n)' d='M0 0h120v120H0z'/%3E%3C/svg%3E");
+}
+.launch-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.launch-wordmark { font-family: var(--num); font-size: 18px; font-weight: 700; letter-spacing: .08em; line-height: 1.15; }
+.launch-wordmark i { display: block; font-size: 10px; font-style: normal; font-weight: 500; letter-spacing: .30em; margin-top: 4px; }
+.launch-sound { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid #cad5be; border-radius: 50%; background: #f8f9ef; color: #214836; }
+.launch-sound svg { width: 20px; height: 20px; }
+.launch-heading { position: relative; z-index: 2; padding-top: 28px; }
+.launch-kicker { display: flex; align-items: center; gap: 8px; font-family: var(--num); font-size: 11px; font-weight: 600; letter-spacing: .15em; color: #5b7556; line-height: 1.5; }
+.launch-kicker i { width: 6px; height: 6px; border-radius: 50%; background: #71974c; }
+.launch-heading h1 { margin-top: 12px; font-size: clamp(38px, 10.4vw, 49px); font-weight: 900; letter-spacing: -.045em; line-height: 1.18; }
+.launch-heading h1 > span { padding-left: 2px; }
+.launch-period { color: #c88c26; margin-left: 2px; }
+.launch-heading p { margin-top: 14px; font-size: 13px; font-weight: 500; letter-spacing: .08em; color: #5d7463; }
+.launch-world-wrap { position: relative; flex: 1; min-height: 270px; margin: -22px -24px -6px; }
+.lobby-host { position: relative; touch-action: pan-y; cursor: grab; }
+.lobby-host:active { cursor: grabbing; }
+.launch-world { position: absolute; inset: 0; min-height: 270px; }
+.lobby-poster { position: absolute; width: 100%; height: 100%; object-fit: contain; pointer-events: none; transition: opacity .65s ease; }
+.lobby-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity .65s ease; }
+.lobby-host.is-3d .lobby-canvas { opacity: 1; }
+.lobby-host.is-3d .lobby-poster { opacity: 0; }
+.launch-course-label { position: absolute; left: 26px; bottom: 14px; display: grid; grid-template-columns: 5px 1fr; align-items: center; column-gap: 7px; font-family: var(--num); font-size: 11px; font-weight: 600; letter-spacing: .12em; pointer-events: none; }
+.launch-course-label i { height: 5px; width: 5px; border-radius: 50%; background: #52925d; }
+.launch-course-label small { grid-column: 2; font-size: 9px; letter-spacing: .08em; color: #6a806b; }
+.launch-stamp { position: absolute; top: 0; right: 25px; width: 57px; height: 57px; border-radius: 50%; border: 1px solid #aab99a; display: flex; flex-direction: column; justify-content: center; align-items: center; transform: rotate(12deg); font-family: var(--num); font-size: 12px; line-height: 1.1; letter-spacing: .05em; color: #67805b; pointer-events: none; }
+.launch-stamp b { font-size: 18px; }
+.launch-bottom { position: relative; z-index: 2; }
+.launch-pick-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 10px; font-size: 11px; font-weight: 700; color: #526a57; }
+.launch-pick-head .num { font-size: 11px; letter-spacing: .14em; }
+.launch-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.launch-character { position: relative; display: flex; align-items: center; gap: 9px; padding: 10px 8px; border: 1px solid #d1dbca; border-radius: 15px; background: #fafbf3; color: #3c5544; text-align: left; transition: background .2s, border-color .2s, transform .2s; }
+.launch-character img { flex: none; height: 42px; width: 42px; object-fit: cover; border-radius: 50%; background: #e5eadb; }
+.launch-character span { display: grid; gap: 2px; min-width: 0; }
+.launch-character b { font-size: 11px; font-weight: 700; white-space: nowrap; }
+.launch-character small { font-family: var(--num); font-size: 9px; letter-spacing: .07em; color: #72836a; }
+.launch-character[aria-pressed="true"] { border-color: #668258; background: #e8efd9; box-shadow: 0 0 0 1px #668258; }
+.launch-character:active { transform: scale(.97); }
+.launch-check { display: none; position: absolute; top: -5px; right: -3px; width: 17px; height: 17px; border-radius: 50%; background: #315e3f; color: white; place-items: center; }
+.launch-check svg { width: 11px; height: 11px; }
+.launch-character[aria-pressed="true"] .launch-check { display: grid; }
+.launch-status { margin: 12px 0 14px; text-align: center; font-size: 10px; color: #6c816c; min-height: 16px; }
+.launch-start { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; min-height: 60px; padding: 17px 23px; background: #224b35; color: #f4f6e9; border: 0; border-radius: 18px; box-shadow: 0 4px 0 #123522, 0 8px 20px #2446321c; font-size: 16px; font-weight: 700; letter-spacing: .04em; transition: transform .15s, box-shadow .15s, background .15s; }
+.launch-start svg { width: 21px; height: 21px; }
+.launch-start:hover { background: #2d5b40; }
+.launch-start:active { transform: translateY(3px); box-shadow: 0 1px 0 #123522; }
+.launch-try { display: flex; gap: 12px; align-items: center; justify-content: center; border: 0; background: none; min-height: 46px; width: 100%; padding: 12px; margin-top: 5px; font-size: 11px; font-weight: 700; color: #50684f; }
+.launch-try span { font-size: 16px; }
+.launch-footer { display: grid; gap: 3px; padding-top: 13px; margin-top: 4px; border-top: 1px solid #d5decc; text-align: center; font-size: 9px; color: #82917d; }
+.launch-footer > span:first-child { font-family: var(--num); font-size: 9px; letter-spacing: .20em; }
+.launch-music { min-height: 32px; border: 0; background: none; padding: 3px 8px; font-size: 10px; color: #597152; }
+.music-volume { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; font-size: 13px; font-weight: 700; }
+.music-volume output { font-family: var(--num); color: var(--grass-text); font-size: 17px; }
+.music-volume input { grid-column: 1 / -1; width: 100%; min-height: 36px; accent-color: var(--grass); cursor: pointer; }
+.music-now { font-size: 12px; color: var(--grass-text); }
+.launch-heading, .launch-bottom { animation: lobby-enter .65s ease both; }
+.launch-bottom { animation-delay: .12s; }
+@keyframes lobby-enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+/* 初回は小さな準備画面からホームへ。 */
+.setup-screen { min-height: 100svh; padding: max(22px, env(safe-area-inset-top)) 28px max(32px, env(safe-area-inset-bottom)); background: radial-gradient(ellipse at 100% 0, #e0edce, transparent 55%), #f4f6e9; }
+.setup-back { display: flex; align-items: center; gap: 7px; min-height: 44px; border: 0; background: none; padding: 0; font-size: 12px; color: #536c56; }
+.setup-back svg { width: 17px; height: 17px; }
+.setup-steps { display: flex; gap: 5px; padding: 25px 0 29px; }
+.setup-steps span { width: 25px; height: 4px; background: #bcccb0; border-radius: 4px; }
+.setup-steps .active { width: 42px; background: #315e3f; }
+.setup-screen h1 { margin-top: 12px; font-size: 38px; font-weight: 900; letter-spacing: -.04em; line-height: 1.3; }
+.setup-lead { margin-top: 18px; font-size: 13px; line-height: 1.9; color: #5f7562; }
+.setup-golfer { display: flex; align-items: center; gap: 14px; padding: 17px 0 24px; margin-top: 12px; }
+.setup-golfer img { border-radius: 50%; border: 3px solid #fff; box-shadow: 0 2px 10px #24463215; }
+.setup-golfer span { display: grid; gap: 5px; }
+.setup-golfer b { font-size: 13px; }
+.setup-golfer small { font-size: 10px; color: #6c816c; }
+.setup-screen .form { gap: 20px; }
+.setup-screen .field label { font-size: 12px; font-weight: 700; }
+.setup-screen .field label span { font-size: 10px; font-weight: 400; color: #7b8b73; margin-left: 5px; }
+.setup-screen input { width: 100%; min-height: 52px; background: #fafbf5; border: 1px solid #d1dbca; color: #163c2d; border-radius: 12px; padding: 12px 14px; color-scheme: light; }
+.setup-note { font-size: 12px; color: #6c816c; text-align: center; margin: 2px 0; }
+
+/* ホームも、同じクラブハウスで迎える。 */
+.home-course-stage { height: 460px; background: radial-gradient(ellipse at 78% 32%, #d1e6b9, transparent 68%), #eff4e4; color: #163c2d; border-radius: 0 0 30px 30px; }
+.home-course-caption { padding: 22px 22px 0; position: relative; z-index: 2; pointer-events: none; }
+.home-course-caption h2 { font-size: 21px; margin-top: 7px; font-weight: 900; letter-spacing: -.02em; }
+.home-lobby { position: absolute; inset: 85px 0 55px; }
+.home-course-stage .home-hud { top: 84px; padding: 0 20px; }
+.home-course-stage .home-lv { width: 112px; padding: 8px 10px; color: #244b35; background: #ffffffc9; border: 1px solid #ffffffd9; border-radius: 13px; box-shadow: 0 3px 12px #2148330a; }
+.home-course-stage .home-lv-t { color: #60765d; font-size: 10px; }
+.home-course-stage .home-lv-n b { font-size: 23px; }
+.home-course-stage .home-xp { height: 5px; background: #d7e3c9; }
+.home-course-stage .home-xp > span { background: #6e984b; }
+.home-course-stage .home-chip { color: #34513a; background: #ffffffc9; border-color: #ffffffd9; font-size: 11px; padding: 5px 11px; }
+.home-course-stage .home-chip b { font-size: 21px; }
+.home-course-stage .home-say { bottom: 52px; border-radius: 12px; color: #35573c; background: #ffffffd9; font-size: 12px; box-shadow: 0 3px 10px #2148330a; padding: 9px 15px; }
+.home-shortcuts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 5px; }
+.home-shortcuts a { display: flex; gap: 7px; align-items: center; padding: 14px 11px; border-radius: 15px; background: var(--surface); border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-size: 11px; font-weight: 700; }
+.home-shortcuts svg { width: 18px; height: 18px; color: var(--grass-text); }
+.home-shortcuts a > span:last-child { margin-left: auto; color: var(--ink-2); }
+@media (min-height: 860px) { .launch-heading { padding-top: 38px; } .launch-world-wrap { min-height: 330px; } }
+@media (max-width: 360px) { .launch-screen { padding-left: 18px; padding-right: 18px; } .launch-character { gap: 6px; padding: 9px 6px; } .launch-character img { width: 34px; height: 34px; } .launch-character b { font-size: 10px; } .launch-status { font-size: 9px; } .launch-world-wrap { margin-left: -18px; margin-right: -18px; } }
+@media (prefers-reduced-motion: reduce) {
+  .launch-heading, .launch-bottom { animation: none; }
+  .lobby-canvas, .lobby-poster, .launch-start, .launch-character { transition: none; }
+}

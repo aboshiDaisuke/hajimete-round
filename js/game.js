@@ -234,6 +234,7 @@
     return W.holes;
   }
   function newGame(mode) {
+    bgm('play', mode === 'round' ? 'course' : 'challenge');
     const first = opts.course === 'all' ? 'hills' : (opts.course || 'hills');
     if (window.GolfScene.course !== first) window.GolfScene.setCourse(first);
     const holes = courseHoles();
@@ -617,6 +618,7 @@
     const d = tot - par;
     if (opts.onEvent) opts.onEvent({ type: 'round', total: tot, par, course: opts.course || 'hills', weather: opts.weather || 'sunny', scores: G.scores.map(x => ({ n: x.n, par: x.par, strokes: x.strokes })) });
     G.phase = 'over';
+    bgm('play', 'result');
     showOverlay(`
       <div class="g-ov-eyebrow">${opts.course === 'all' ? 'ALL 9 HOLES' : 'SHORT ROUND'} ・ RESULT</div>
       <div class="g-ov-score">${tot}<small>（${d === 0 ? 'イーブン' : d > 0 ? '+' + d : d}）</small></div>
@@ -629,6 +631,7 @@
 
   function showChallengeResult() {
     G.phase = 'over';
+    bgm('play', 'result');
     let rows, best;
     if (G.mode === 'nearpin') {
       const ok = G.attempts.filter(a => !a.fail).map(a => a.holed ? 0 : a.dist);

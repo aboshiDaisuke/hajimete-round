@@ -1,14 +1,17 @@
 /* =========================================================
    BGM（スーパーファミコン風・すべてコードで演奏するオリジナル曲）
    音のつくり：
-   - SPC700 と同じ考え方。32kHz の小さな波形（サンプル）をコードで作り、粗く量子化して、ピッチを変えて鳴らす
+   - 16bit時代のサンプル音源を参考に、32kHz の波形を作り、量子化してピッチを変えて鳴らす
    - 楽器：パルス・ブラス・フルート・ストリングス・ギター・ハープ・マリンバ・オルゴール・グロッケン・ベース・ドラム
    - スーファミ特有のエコー（左右に跳ね返る、こもったフィードバック）と、こもった出力
    曲：
+   - title     起動画面（108BPM・32小節。フルート → ブラス → マリンバ → テーマ再現）
    - course    ラウンド中（ハ長調・128BPM・32小節：A→A'→B→ニ長調に転調のサビ）
    - challenge ニアピン／ドラコン（イ短調・152BPM・16小節のロック）
-   - menu      プレー画面（ト長調・96BPM・24小節のボサノバ）
+   - menu      ホーム・プレー・各メニュー（94BPM・24小節。エレピとフルートのボサノバ）
    - putt      パター（ヘ長調・80BPM・16小節のゆったりした曲）
+   - result    リザルト（92BPM・16小節。タイトルのテーマをゆったり再現）
+   曲の追加・編曲：js/bgm-score.js
    ジングル：fanfare（バーディー）/ cupin / miss / levelup
    ========================================================= */
 (function () {
@@ -90,12 +93,12 @@
   const INSTS = {
     // ---- ループする音色 ----
     pulse:   { k: 'loop', amp: (k) => (Math.sin(k * Math.PI * 0.25) / k) * (k > 14 ? 0.5 : 1), env: [0.004, 0.12, 0.7, 0.05], vib: 9 },
-    brass:   { k: 'loop', amp: (k) => Math.pow(k, -0.85) * (k < 7 ? 1 : 0.8) * (k === 2 ? 1.25 : 1), env: [0.035, 0.12, 0.85, 0.08], vib: 7 },
+    brass:   { k: 'loop', amp: (k) => Math.pow(k, -1.15) * Math.exp(-k / 9) * (k === 2 ? 1.15 : 1), env: [0.025, 0.12, 0.78, 0.10], vib: 6 },
     flute:   { k: 'loop', amp: (k) => [0, 1, 0.42, 0.16, 0.08, 0.05, 0.03][k] || 0, env: [0.06, 0.1, 0.9, 0.1], vib: 10 },
     strings: { k: 'loop', amp: (k) => Math.pow(k, -1.05) * Math.exp(-k / 14), env: [0.22, 0.2, 1, 0.4], chorus: 7 },
     organ:   { k: 'loop', amp: (k) => [0, 1, 0.55, 0.35, 0.18, 0.1, 0.06, 0.03][k] || 0, env: [0.01, 0.1, 0.9, 0.06] },
     gtr:     { k: 'loop', amp: (k) => Math.pow(k, -0.7) * Math.exp(-k / 12), env: [0.003, 0.09, 0.1, 0.04] },
-    bass:    { k: 'loop', amp: (k) => Math.pow(k, -1.25) * (k > 9 ? 0 : 1), env: [0.004, 0.09, 0.55, 0.05] },
+    bass:    { k: 'loop', amp: (k) => Math.pow(k, -1.6) * (k > 8 ? 0 : 1), env: [0.006, 0.09, 0.55, 0.05] },
     softbass:{ k: 'loop', amp: (k) => [0, 1, 0.4, 0.14, 0.05][k] || 0, env: [0.01, 0.15, 0.7, 0.1] },
     // ---- 一度だけ鳴る音色 ----
     nylon:   { k: 'shot', gen: (f) => pluck(f, 1.3, 0.9955, 0.5), env: [0.002, 0, 1, 0.08] },
@@ -103,6 +106,16 @@
     marimba: { k: 'shot', gen: (f) => modal(f, 1.1, [[1, 1, 3.4], [3.92, 0.45, 11], [9.3, 0.12, 24]]), env: [0.002, 0, 1, 0.06] },
     glock:   { k: 'shot', gen: (f) => modal(f, 1.6, [[1, 1, 2.6], [2.76, 0.55, 4.5], [5.4, 0.3, 8], [8.93, 0.15, 12]]), env: [0.002, 0, 1, 0.3], ring: true },
     musicbox:{ k: 'shot', gen: (f) => modal(f, 1.7, [[1, 1, 2.2], [2.5, 0.32, 5], [4.1, 0.22, 7], [6.3, 0.12, 10]]), env: [0.002, 0, 1, 0.3], ring: true },
+    epiano:  { k: 'shot', gen: (f) => {
+      const d = new Float32Array(SR * 2.4);
+      for (let i = 0; i < d.length; i++) {
+        const t = i / SR, w = 2 * Math.PI * f * t;
+        const body = Math.sin(w + 0.7 * Math.exp(-t * 8) * Math.sin(2 * w));
+        const tine = 0.22 * Math.sin(4 * w + 0.20 * Math.sin(w)) * Math.exp(-t * 10);
+        d[i] = (body + tine) * Math.exp(-t * 2.4) * Math.min(1, t * 350);
+      }
+      return { data: quant(norm(lp1(d, 0.65), 0.85), 90), loop: null, ref: f };
+    }, env: [0.004, 0, 1, 0.18] },
   };
   const LOOP_P = [256, 181, 128, 90, 64, 45, 32, 22, 16];                // 音域ごとに用意する波形の長さ
   const SHOT_REF = [110, 165, 220, 330, 440, 660, 880, 1320];
@@ -196,6 +209,10 @@
       ],
     },
   };
+  if (window.GOLF_MUSIC) {
+    Object.assign(SONGS, window.GOLF_MUSIC.songs);
+    Object.entries(window.GOLF_MUSIC.refinements).forEach(([id, opts]) => Object.assign(SONGS[id], opts));
+  }
 
   /* ---------- 伴奏のパターン（16分音符 16 個で 1 小節） ---------- */
   const BASSP = {
@@ -237,7 +254,8 @@
     E.d1 = d1; E.d2 = d2;
     d1.delayTime.value = 0.24; d2.delayTime.value = 0.36;
     f1.type = f2.type = 'lowpass'; f1.frequency.value = f2.frequency.value = 3000;
-    const fb1 = g(0.42), fb2 = g(0.38), wet = g(0.5);
+    const fb1 = g(0.34), fb2 = g(0.30), wet = g(0.34);
+    E.echoReturn = wet;
     const pl = ctx.createStereoPanner(), pr = ctx.createStereoPanner(); pl.pan.value = -0.75; pr.pan.value = 0.75;
     E.echoBus.connect(d1); d1.connect(f1); f1.connect(fb1); fb1.connect(d2); d2.connect(f2); f2.connect(fb2); fb2.connect(d1);
     d1.connect(pl); d2.connect(pr); pl.connect(wet); pr.connect(wet); wet.connect(comp);
@@ -246,7 +264,7 @@
     E.ch = {
       lead: chan(E.musicBus, 1, 0.34, 0), pad: chan(E.musicBus, 1, 0.5, -0.15), arp: chan(E.musicBus, 1, 0.42, 0.28),
       bass: chan(E.musicBus, 1, 0.02, 0), drums: chan(E.musicBus, 1, 0.1, -0.05), stab: chan(E.musicBus, 1, 0.3, -0.25),
-      fx: chan(E.jingleBus, 1, 0.3, 0),
+      counter: chan(E.musicBus, 1, 0.28, 0.28), fx: chan(E.jingleBus, 1, 0.3, 0),
     };
     E.live = [];
     E.bufs = new Map();
@@ -265,6 +283,7 @@
     const voices = inst.chorus ? [-inst.chorus, inst.chorus] : [0];
     voices.forEach((cents, vi) => {
       const src = ctx.createBufferSource(), gn = ctx.createGain();
+      const nodes = [gn]; let lfo = null;
       src.buffer = buf; src.playbackRate.value = rate; src.detune.value = cents;
       if (smp.loop) { src.loop = true; src.loopStart = smp.loop[0] / SR; src.loopEnd = smp.loop[1] / SR; }
       const v = vel / voices.length;
@@ -275,37 +294,47 @@
       if (!inst.ring || smp.loop) gn.gain.setTargetAtTime(0.0001, end, Math.max(0.01, r / 3));
       // ビブラート（すこし遅れてかかる）
       if (inst.vib && dur > 0.25) {
-        const lfo = ctx.createOscillator(), lg = ctx.createGain();
+        lfo = ctx.createOscillator(); const lg = ctx.createGain(); nodes.push(lfo, lg);
         lfo.frequency.value = 5.2; lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(inst.vib, t + Math.min(0.5, dur * 0.9));
         lfo.connect(lg); lg.connect(src.detune); lfo.start(t); lfo.stop(end + r * 2);
       }
       src.connect(gn);
-      if (voices.length > 1) { const p = ctx.createStereoPanner(); p.pan.value = vi ? 0.45 : -0.45; gn.connect(p); p.connect(E.ch[ch]); } else gn.connect(E.ch[ch]);
+      if (voices.length > 1) { const p = ctx.createStereoPanner(); nodes.push(p); p.pan.value = vi ? 0.45 : -0.45; gn.connect(p); p.connect(E.ch[ch]); } else gn.connect(E.ch[ch]);
       const stopAt = smp.loop ? end + r * 2.5 + 0.05 : t + smp.data.length / SR / rate + 0.05;
       src.start(t); src.stop(stopAt);
-      E.live.push(src); src.onended = () => { const i = E.live.indexOf(src); if (i >= 0) E.live.splice(i, 1); };
+      E.live.push(src); src.onended = () => {
+        const i = E.live.indexOf(src); if (i >= 0) E.live.splice(i, 1);
+        if (lfo) { try { lfo.stop(); } catch (e) { /* 終了済み */ } }
+        src.disconnect(); nodes.forEach(n => n.disconnect());
+      };
     });
   };
   Engine.prototype.drum = function (name, t, vel) {
     const E = this, smp = drum(name), src = E.ctx.createBufferSource(), gn = E.ctx.createGain();
-    src.buffer = E.buf(smp); gn.gain.value = vel; src.connect(gn); gn.connect(E.ch.drums);
-    src.start(t); E.live.push(src); src.onended = () => { const i = E.live.indexOf(src); if (i >= 0) E.live.splice(i, 1); };
+    src.buffer = E.buf(smp); gn.gain.value = vel * (E.drumLevel == null ? 1 : E.drumLevel); src.connect(gn); gn.connect(E.ch.drums);
+    src.start(t); E.live.push(src); src.onended = () => { const i = E.live.indexOf(src); if (i >= 0) E.live.splice(i, 1); src.disconnect(); gn.disconnect(); };
   };
   Engine.prototype.stopLive = function () { this.live.splice(0).forEach(s => { try { s.stop(); } catch (e) { /* noop */ } }); };
 
   /* ---------- 1 小節ぶんを予約 ---------- */
   const grid = (str, i) => str[i] === 'x' || str[i] === 'o';
   Engine.prototype.scheduleBar = function (S, b, t0) {
-    const E = this, N = S.chords.length, bar = b % N, step = 60 / S.bpm / 4, at = (s) => t0 + s * step;
+    const E = this, N = S.chords.length, bar = b % N, step = 60 / S.bpm / 4;
+    const at = s => t0 + (s + (s % 4 === 2 ? (S.swing || 0) : 0)) * step;
     const sec = S.sections.slice().reverse().find(x => bar >= x.from);
+    E.drumLevel = sec.drumLevel == null ? (S.style === 'rock' ? 0.78 : 0.85) : sec.drumLevel;
     const c = chord(S.chords[bar]), nc = chord(S.chords[(bar + 1) % N]), first = bar === sec.from, lastOf4 = bar % 4 === 3;
     // メロディ（楽器を重ねて厚みを出す）
     phrase(S.melody[bar] || '').forEach(([m, s, len]) => {
       sec.lead.forEach(([inst, vel], k) => {
         const legato = inst === 'flute' || inst === 'brass' || inst === 'strings';
-        E.note(inst, m, at(s), len * step * (legato ? 0.98 : 0.9), vel * (s % 4 === 0 ? 1.08 : 0.94), 'lead', k ? { shift: 0 } : null);
+        const accent = s % 4 === 0 ? 1.05 : 0.93;
+        E.note(inst, m + (S.melodyShift || 0), at(s), len * step * (legato ? 0.95 : 0.87), vel * accent, 'lead');
       });
     });
+    if (sec.counter && S.counter) {
+      phrase(S.counter[bar % S.counter.length]).forEach(([m, s, len]) => E.note(sec.counter[0], m, at(s), len * step * 0.9, sec.counter[1], 'counter'));
+    }
     // パッド（ストリングス）
     if (sec.pad) c.tones.forEach(m => E.note('strings', m, at(0), 16 * step * 0.985, sec.pad, 'pad'));
     // アルペジオ
@@ -342,8 +371,8 @@
         if (grid(D.shaker, i)) E.drum('shaker', at(i), i % 4 === 0 ? 0.16 : 0.1);
         if (grid(D.kick, i)) E.drum('kick', at(i), 0.4);
       }
-      // ナイロンギターのボサノバ・コンピング（ストラム）
-      [0, 3, 6, 10, 13].forEach(s => c.tones.forEach((m, i) => E.note('nylon', m, at(s) + i * 0.013, step * 3, 0.085, 'arp')));
+      // ギターとエレピで交互に応答する、軽いボサノバの伴奏。
+      [0, 3, 6, 10, 13].forEach(s => c.tones.forEach((m, i) => E.note(bar % 2 ? 'epiano' : 'nylon', m, at(s) + i * 0.011, step * 2.6, bar % 2 ? 0.050 : 0.065, 'arp')));
     } else if (S.style === 'calm') {
       if (bar % 2 === 0) E.drum('shaker', at(0), 0.08);
       for (let i = 2; i < 16; i += 4) E.drum('shaker', at(i), 0.05);
@@ -381,72 +410,122 @@
 
   /* ---------- 再生の制御 ---------- */
   let E = null, songName = null, S = null, nextBar = 0, barIdx = 0, timer = 0, gen = 0, stopping = false;
-  let volume = 0.6, enabled = true, pending = null;
+  let volume = 0.45, enabled = true, pending = null, requested = null, changeTimer = 0, duckTimer = 0, unavailable = false;
   const canStart = () => !navigator.userActivation || navigator.userActivation.hasBeenActive;
+  function status() {
+    if (!enabled) return 'muted';
+    if (unavailable) return 'unavailable';
+    if (!requested) return 'off';
+    if (volume === 0) return 'quiet';
+    if (document.hidden) return 'paused';
+    if (pending || !E || E.ctx.state !== 'running') return 'waiting';
+    return S && !stopping ? 'playing' : 'waiting';
+  }
+  function announce() {
+    window.dispatchEvent(new CustomEvent('golf-bgm-change', { detail: { status: status(), song: requested, title: requested && SONGS[requested].title, volume } }));
+  }
   function ensure() {
-    if (E) { if (E.ctx.state === 'suspended') E.ctx.resume(); return true; }
+    if (E) { if (E.ctx.state === 'suspended' && !document.hidden) E.ctx.resume().catch(() => announce()); return true; }
     let ctx;
-    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return false; }
+    try { ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SR }); }
+    catch (e) {
+      try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+      catch (err) { unavailable = true; announce(); return false; }
+    }
     E = new Engine(ctx);
     E.master.gain.value = volume * 0.95;
+    ctx.onstatechange = announce;
+    if (ctx.state === 'suspended' && !document.hidden) ctx.resume().catch(() => announce());
     return true;
   }
   function fadeMusic(v, sec) {
     if (!E) return;
     const t = E.ctx.currentTime;
-    [E.musicBus, E.echoBus].forEach(n => { n.gain.cancelScheduledValues(t); n.gain.setValueAtTime(n.gain.value, t); n.gain.linearRampToValueAtTime(v, t + sec); });
+    [E.musicBus, E.echoBus, E.echoReturn].forEach(n => {
+      if (n.gain.cancelAndHoldAtTime) n.gain.cancelAndHoldAtTime(t);
+      else { const value = n.gain.value; n.gain.cancelScheduledValues(t); n.gain.setValueAtTime(value, t); }
+      n.gain.linearRampToValueAtTime(n === E.echoReturn ? 0.34 * v : v, t + sec);
+    });
   }
   function tick() {
-    if (!S || !E) return;
+    if (!S || !E || E.ctx.state !== 'running' || document.hidden || stopping) return;
     const bd = 60 / S.bpm * 4;
+    // 端末の中断後に、過去の小節をまとめて鳴らさない。
+    if (nextBar < E.ctx.currentTime - 0.1) {
+      barIdx += Math.max(0, Math.floor((E.ctx.currentTime - nextBar) / bd));
+      nextBar = E.ctx.currentTime + 0.05;
+    }
     while (nextBar < E.ctx.currentTime + 0.35) { E.scheduleBar(S, barIdx, nextBar); barIdx++; nextBar += bd; }
   }
   function play(name) {
     if (!enabled || !SONGS[name]) return;
-    if (songName === name && S && !stopping) return;
-    if (!canStart()) { pending = name; return; }
+    requested = name;
+    if (songName === name && S && !stopping) { pending = null; ensure(); announce(); return; }
+    if (!canStart()) { pending = name; announce(); return; }
     pending = null;
     if (!ensure()) return;
     const my = ++gen;
+    clearTimeout(changeTimer); clearTimeout(duckTimer); clearInterval(timer);
     const start = () => {
-      if (my !== gen) return;
+      if (my !== gen || !enabled || requested !== name) return;
       stopping = false;
       S = SONGS[name]; songName = name;
       const step = 60 / S.bpm / 4;
       E.d1.delayTime.value = step * 2; E.d2.delayTime.value = step * 3;     // エコーの間隔を曲のテンポに合わせる
       barIdx = 0; nextBar = E.ctx.currentTime + 0.12;
-      clearInterval(timer); timer = setInterval(tick, 50); tick();
-      fadeMusic(1, 0.6);
+      timer = document.hidden ? 0 : setInterval(tick, 50); tick();
+      fadeMusic(S.mix || 1, 0.55);
+      announce();
     };
-    if (S) { fadeMusic(0, 0.35); setTimeout(() => { if (my === gen) E.stopLive(); start(); }, 380); } else start();
+    if (S) {
+      stopping = true; fadeMusic(0, 0.28); announce();
+      changeTimer = setTimeout(() => { if (my !== gen) return; E.stopLive(); start(); }, 300);
+    } else start();
   }
   function stop() {
-    pending = null;
+    requested = pending = null;
     const my = ++gen;
-    if (!S) return;
+    clearTimeout(changeTimer); clearTimeout(duckTimer); clearInterval(timer);
+    if (!S) { if (E) { E.stopLive(); fadeMusic(0, 0.1); } stopping = false; announce(); return; }
     stopping = true;
-    fadeMusic(0, 0.45);
-    setTimeout(() => { if (my === gen) { S = null; songName = null; stopping = false; clearInterval(timer); E.stopLive(); } }, 500);
+    fadeMusic(0, 0.25); announce();
+    changeTimer = setTimeout(() => { if (my === gen) { S = null; songName = null; stopping = false; E.stopLive(); announce(); } }, 280);
   }
-  function duck(on) { if (S) fadeMusic(on ? 0.2 : 1, on ? 0.15 : 0.8); }
+  function duck(on) { if (S) fadeMusic((on ? 0.22 : 1) * (S.mix || 1), on ? 0.12 : 0.7); }
   function jingle(kind) {
-    if (!enabled || !canStart() || !ensure()) return;
-    if (S) { duck(true); setTimeout(() => duck(false), kind === 'levelup' ? 3200 : 2400); }
+    if (!enabled || document.hidden || !canStart() || !ensure()) return;
+    if (S) {
+      clearTimeout(duckTimer); duck(true); const my = gen;
+      duckTimer = setTimeout(() => { if (gen === my && enabled) duck(false); }, kind === 'levelup' ? 3200 : 2400);
+    }
+    E.drumLevel = 0.85;
     E.jingle(kind, E.ctx.currentTime + 0.05);
   }
   // ページを触ったら（自動再生の制限で止まっていた）音を再開する
   const wake = () => {
-    if (E && E.ctx.state === 'suspended') E.ctx.resume();
-    if (pending) { const n = pending; pending = null; setTimeout(() => play(n), 0); }
+    if (!enabled || document.hidden) return;
+    if (E && E.ctx.state === 'suspended') E.ctx.resume().then(() => { tick(); announce(); }).catch(() => announce());
+    if (pending && requested) play(requested);
   };
   document.addEventListener('pointerdown', wake, { passive: true });
   document.addEventListener('keydown', wake);
+  document.addEventListener('visibilitychange', () => {
+    if (!E) return;
+    if (document.hidden) { clearInterval(timer); E.ctx.suspend().then(announce).catch(() => {}); }
+    else if (enabled && requested && canStart()) {
+      E.ctx.resume().then(() => { clearInterval(timer); timer = setInterval(tick, 50); tick(); announce(); }).catch(() => announce());
+    }
+  });
 
   // 書き出し（確認用）：曲を WAV にするための PCM を返す
   async function render(name, nBars, kind) {
-    const s = SONGS[name], bd = kind ? 0 : 60 / s.bpm * 4, secs = kind ? 4 : bd * nBars + 2.5;
+    const s = SONGS[name];
+    if (!kind && !s) throw new Error('Unknown BGM: ' + name);
+    nBars = nBars == null ? (kind ? 0 : s.chords.length) : nBars;
+    const bd = kind ? 0 : 60 / s.bpm * 4, secs = kind ? 4 : bd * nBars + 2.5;
     const oc = new OfflineAudioContext(2, Math.ceil(secs * 44100), 44100), e = new Engine(oc);
     e.master.gain.value = 0.57;
+    e.musicBus.gain.value = e.echoBus.gain.value = kind ? 1 : (s.mix || 1);
     if (kind) e.jingle(kind, 0.05);
     else {
       const step = 60 / s.bpm / 4; e.d1.delayTime.value = step * 2; e.d2.delayTime.value = step * 3;
@@ -457,10 +536,26 @@
   }
 
   window.GolfBGM = {
-    play, stop, duck, jingle, render,
-    setEnabled(v) { enabled = v; if (!v) stop(); },
-    setVolume(v) { volume = v; if (E) E.master.gain.value = volume * 0.95; },
+    play, stop, duck, jingle, render, unlock: wake,
+    setEnabled(v) {
+      enabled = !!v;
+      if (!v) stop();
+      if (E) {
+        E.jingleBus.gain.setTargetAtTime(enabled ? 1 : 0, E.ctx.currentTime, 0.025);
+        E.master.gain.setTargetAtTime(enabled ? volume * 0.95 : 0, E.ctx.currentTime, 0.025);
+      }
+      announce();
+    },
+    setVolume(v) {
+      const n = Number(v); if (!Number.isFinite(n)) return;
+      volume = Math.max(0, Math.min(1, n));
+      if (E) E.master.gain.setTargetAtTime(enabled ? volume * 0.95 : 0, E.ctx.currentTime, 0.035);
+      announce();
+    },
     get playing() { return songName; },
+    get status() { return status(); },
+    get track() { return requested && { id: requested, title: SONGS[requested].title }; },
+    tracks: Object.entries(SONGS).map(([id, s]) => ({ id, title: s.title || id, bpm: s.bpm, bars: s.chords.length })),
     songs: Object.keys(SONGS),
   };
 })();

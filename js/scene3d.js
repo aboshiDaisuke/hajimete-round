@@ -979,9 +979,12 @@
     if (state.onSelect) state.onSelect(hs);
   }
 
+  let mountGeneration = 0;
   function mount(container, opts) {
     opts = opts || {};
+    const generation = ++mountGeneration;
     const go = () => {
+      if (generation !== mountGeneration || !container.isConnected) return;
       // ゲーム以外（図鑑など）は、いつも晴れのグリーンヒルズ
       const playing = opts.mode === 'play';
       setCourse(playing ? (opts.course || 'hills') : 'hills');
@@ -1012,6 +1015,7 @@
       if (opts.onReady) opts.onReady();
     };
     const whenThree = () => {
+      if (generation !== mountGeneration || !container.isConnected) return;
       if (window.THREE) {
         // テクスチャ生成が重いので、描画を1フレーム待ってから
         setTimeout(go, state.built ? 0 : 60);
@@ -1023,9 +1027,11 @@
   }
 
   function unmount() {
+    mountGeneration++;
     if (state.observer) state.observer.disconnect();
     state.container = null;
     state.layer = null;
+    state.onFrame = state.onSelect = null;
     if (state.renderer) setRunning();
   }
 

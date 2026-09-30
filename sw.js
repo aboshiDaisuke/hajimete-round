@@ -1,6 +1,6 @@
 /* tools/build_pwa.pyで配信ファイル一覧とバージョンを更新する。 */
 // BEGIN PRECACHE
-const VERSION = "1af6f0ff15a6360f";
+const VERSION = "19d6b359655b9496";
 const APP_FILES = [
   "index.html",
   "manifest.webmanifest",
